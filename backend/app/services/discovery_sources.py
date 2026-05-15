@@ -7,6 +7,7 @@ from typing import Any
 from urllib.parse import quote_plus
 
 import httpx
+import os
 
 from app.schemas.discovery import DiscoveryRow, DiscoverySourceBundle
 
@@ -27,7 +28,14 @@ def _request_json(method: str, url: str, **kwargs: Any) -> Any:
     except Exception:
         # Retry with a more browser-like User-Agent and Accept header (helps for SPARQL endpoints)
         try:
-            fallback_headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/115.0 Safari/537.36", "Accept": "application/sparql-results+json, application/json, text/json"}
+            contact = os.environ.get("WIKIDATA_CONTACT_EMAIL")
+            fallback_headers = {
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/115.0 Safari/537.36",
+                "Accept": "application/sparql-results+json, application/json, text/json",
+            }
+            if contact:
+                fallback_headers["From"] = contact
+                fallback_headers["User-Agent"] = f"beyond2-university-crawler/1.0 (contact: {contact})"
             response = httpx.request(method, url, headers={**fallback_headers, **headers}, timeout=30, **kwargs)
             response.raise_for_status()
             return response.json()
