@@ -28,7 +28,7 @@ def run_for_country(country_name: str):
         print("Using data source:", ds.id)
         job = CrawlJob(
             country=country_name,
-            source_ids=[ds.id],
+            source_ids=[str(ds.id)],
             crawl_mode="trusted_sources",
             discovery_input=None,
             critical_fields=["name", "website"],
