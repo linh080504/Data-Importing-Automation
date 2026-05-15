@@ -1,0 +1,71 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: data_import_automation
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d data_import_automation"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  backend:
+    build:
+      context: ./backend
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      APP_NAME: Data Import Automation API
+      ENVIRONMENT: development
+      DEBUG: "false"
+      DATABASE_URL: postgresql+psycopg://postgres:postgres@postgres:5432/data_import_automation
+      GEMINI_API_KEY: ${GEMINI_API_KEY:-your_gemini_api_key_here}
+      N8N_WEBHOOK_SECRET: ${N8N_WEBHOOK_SECRET:-your_internal_shared_secret_here}
+      N8N_CALLBACK_HEADER: X-N8N-Secret
+      INTERNAL_WEBHOOK_ENABLED: "true"
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./backend:/app
+
+  frontend:
+    build:
+      context: ./frontend
+    depends_on:
+      - backend
+    environment:
+      WATCHPACK_POLLING: "true"
+    ports:
+      - "3000:3000"
+    volumes:
+      - ./frontend:/app
+      - frontend_node_modules:/app/node_modules
+
+  n8n:
+    image: docker.n8n.io/n8nio/n8n:latest
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      N8N_HOST: localhost
+      N8N_PORT: 5678
+      N8N_PROTOCOL: http
+      WEBHOOK_URL: http://localhost:5678/
+      GENERIC_TIMEZONE: UTC
+    ports:
+      - "5678:5678"
+    volumes:
+      - n8n_data:/home/node/.n8n
+      - ./n8n:/files/n8n
+
+volumes:
+  postgres_data:
+  frontend_node_modules:
+  n8n_data:

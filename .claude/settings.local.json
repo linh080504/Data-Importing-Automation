@@ -1,0 +1,14 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python *)",
+      "Bash(pytest *)",
+      "WebFetch(domain:moet.gov.vn)",
+      "WebFetch(domain:www.4icu.org)",
+      "WebFetch(domain:en.wikipedia.org)",
+      "WebFetch(domain:www.topuniversities.com)",
+      "WebSearch",
+      "WebFetch(domain:www.unirank.org)"
+    ]
+  }
+}

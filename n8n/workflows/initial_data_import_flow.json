@@ -1,0 +1,471 @@
+{
+  "name": "Initial Data Import Flow",
+  "nodes": [
+    {
+      "parameters": {},
+      "id": "manualTrigger",
+      "name": "Manual Trigger",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [200, 300]
+    },
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "hours",
+              "hoursInterval": 24,
+              "triggerAtHour": 2
+            }
+          ]
+        }
+      },
+      "id": "scheduledRefreshTrigger",
+      "name": "Scheduled Refresh Trigger",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [200, 460]
+    },
+    {
+      "parameters": {
+        "keepOnlySet": false,
+        "values": {
+          "string": [
+            { "name": "job_id", "value": "job_1" },
+            { "name": "source_id", "value": "src_1" },
+            { "name": "source_url", "value": "https://example.edu/source-feed" },
+            { "name": "status", "value": "APPROVED" },
+            { "name": "run_mode", "value": "MANUAL" }
+          ],
+          "number": [
+            { "name": "overall_confidence", "value": 92 }
+          ]
+        }
+      },
+      "id": "seedConfig",
+      "name": "Seed Job Config",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [420, 300]
+    },
+    {
+      "parameters": {
+        "keepOnlySet": false,
+        "values": {
+          "string": [
+            { "name": "job_id", "value": "job_1" },
+            { "name": "source_id", "value": "src_1" },
+            { "name": "source_url", "value": "https://example.edu/source-feed" },
+            { "name": "status", "value": "APPROVED" },
+            { "name": "run_mode", "value": "SCHEDULED_REFRESH" },
+            { "name": "refresh_reason", "value": "DAILY_REFRESH" }
+          ],
+          "number": [
+            { "name": "overall_confidence", "value": 92 }
+          ]
+        }
+      },
+      "id": "scheduledRefreshConfig",
+      "name": "Scheduled Refresh Config",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [420, 460]
+    },
+    {
+      "parameters": {
+        "url": "={{$json.source_url}}",
+        "options": {}
+      },
+      "id": "fetchSourceData",
+      "name": "Fetch Source Data",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [640, 300],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2000,
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "const sourceRows = Array.isArray($json.data) ? $json.data : Array.isArray($json.items) ? $json.items : Array.isArray($json) ? $json : [$json];\nconst config = $('Fetch Source Data').item.json;\nreturn sourceRows.map((row, index) => ({\n  json: {\n    job_id: config.job_id,\n    source_id: config.source_id,\n    unique_key: String(row.unique_key ?? row.id ?? `row-${index + 1}`),\n    record_hash: JSON.stringify(row),\n    raw_payload: row,\n    critical_fields_extracted: {},\n    overall_confidence: config.overall_confidence,\n    status: config.status,\n    run_mode: config.run_mode ?? 'MANUAL',\n    refresh_reason: config.refresh_reason ?? null\n  }\n}));"
+      },
+      "id": "normalizeWebhookPayload",
+      "name": "Normalize Webhook Payload",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [860, 300]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://127.0.0.1:8000/api/v1/internal/webhook/n8n/upsert-record",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-N8N-Secret",
+              "value": "={{$env.N8N_WEBHOOK_SECRET}}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "json",
+        "specifyBody": "json",
+        "jsonBody": "={{$json}}",
+        "options": {}
+      },
+      "id": "callUpsertWebhook",
+      "name": "Call Upsert Webhook",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1080, 300],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2000,
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "rules": {
+          "values": [
+            {
+              "conditions": {
+                "options": { "caseSensitive": true, "leftValue": "", "typeValidation": "strict", "version": 2 },
+                "conditions": [
+                  { "leftValue": "={{$json.action}}", "rightValue": "SKIP_AI_NO_CHANGE", "operator": { "type": "string", "operation": "equals" } }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "skip"
+            },
+            {
+              "conditions": {
+                "options": { "caseSensitive": true, "leftValue": "", "typeValidation": "strict", "version": 2 },
+                "conditions": [
+                  { "leftValue": "={{$json.action}}", "rightValue": "UPSERT_APPROVED", "operator": { "type": "string", "operation": "equals" } }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "approved"
+            },
+            {
+              "conditions": {
+                "options": { "caseSensitive": true, "leftValue": "", "typeValidation": "strict", "version": 2 },
+                "conditions": [
+                  { "leftValue": "={{$json.action}}", "rightValue": "QUEUED_FOR_REVIEW", "operator": { "type": "string", "operation": "equals" } }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "review"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "routeWebhookAction",
+      "name": "Route Webhook Action",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3.2,
+      "position": [1300, 300]
+    },
+    {
+      "parameters": {
+        "values": {
+          "string": [
+            { "name": "workflow_status", "value": "SKIPPED_NO_CHANGE" },
+            { "name": "message", "value": "Record hash unchanged, AI processing skipped." }
+          ]
+        }
+      },
+      "id": "skipNoChange",
+      "name": "Skip No Change",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [1530, 180]
+    },
+    {
+      "parameters": {
+        "values": {
+          "string": [
+            { "name": "workflow_status", "value": "AI_EXTRACTION_PENDING" },
+            { "name": "message", "value": "Proceed to AI extraction/judge flow for approved changed record." }
+          ]
+        }
+      },
+      "id": "queueAiExtraction",
+      "name": "Queue AI Extraction",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [1530, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "return [{ json: { ...$json, next_step: 'AI_EXTRACT_CRITICAL_FIELDS', note: 'Placeholder for AI1 extractor call', ai_extraction_status: 'SUCCESS' } }];"
+      },
+      "id": "aiExtractorPlaceholder",
+      "name": "AI Extractor Placeholder",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1750, 300],
+      "retryOnFail": true,
+      "maxTries": 2,
+      "waitBetweenTries": 1000,
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "return [{ json: { ...$json, next_step: 'AI_JUDGE_VALIDATION', note: 'Placeholder for AI2 judge call and confidence scoring', ai_judge_status: 'SUCCESS' } }];"
+      },
+      "id": "aiJudgePlaceholder",
+      "name": "AI Judge Placeholder",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1970, 300],
+      "retryOnFail": true,
+      "maxTries": 2,
+      "waitBetweenTries": 1000,
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "rules": {
+          "values": [
+            {
+              "conditions": {
+                "options": { "caseSensitive": true, "leftValue": "", "typeValidation": "strict", "version": 2 },
+                "conditions": [
+                  { "leftValue": "={{$json.status}}", "rightValue": "APPROVED", "operator": { "type": "string", "operation": "equals" } }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "approved"
+            },
+            {
+              "conditions": {
+                "options": { "caseSensitive": true, "leftValue": "", "typeValidation": "strict", "version": 2 },
+                "conditions": [
+                  { "leftValue": "={{$json.status}}", "rightValue": "REVIEW", "operator": { "type": "string", "operation": "equals" } }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "review"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "routeAiOutcome",
+      "name": "Route AI Outcome",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3.2,
+      "position": [2190, 300]
+    },
+    {
+      "parameters": {
+        "values": {
+          "string": [
+            { "name": "workflow_status", "value": "READY_FOR_CLEAN_RECORD_GENERATION" },
+            { "name": "message", "value": "Approved AI result can continue into clean-record generation." }
+          ]
+        }
+      },
+      "id": "approvedPath",
+      "name": "Approved Path",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [2420, 240]
+    },
+    {
+      "parameters": {
+        "values": {
+          "string": [
+            { "name": "workflow_status", "value": "QUEUE_MANUAL_REVIEW" },
+            { "name": "message", "value": "Route this record into the review queue for human decision." }
+          ]
+        }
+      },
+      "id": "reviewPath",
+      "name": "Review Queue Path",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [2420, 360]
+    },
+    {
+      "parameters": {
+        "values": {
+          "string": [
+            { "name": "workflow_status", "value": "QUEUE_MANUAL_REVIEW" },
+            { "name": "message", "value": "Backend requested manual review for this changed record." }
+          ]
+        }
+      },
+      "id": "backendReviewPath",
+      "name": "Backend Review Path",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [1530, 420]
+    },
+    {
+      "parameters": {
+        "jsCode": "const errorMessage = $json.error?.message ?? '';\nconst workflowStep = !errorMessage ? 'UNKNOWN_STAGE' : errorMessage.includes('127.0.0.1:8000') || errorMessage.includes('/internal/webhook/n8n/upsert-record') ? 'UPSERT_WEBHOOK' : errorMessage.includes('source_url') || errorMessage.includes('status code') || errorMessage.includes('request') ? 'FETCH_SOURCE_DATA' : errorMessage.includes('AI_EXTRACT_CRITICAL_FIELDS') ? 'AI_EXTRACTOR' : errorMessage.includes('AI_JUDGE_VALIDATION') ? 'AI_JUDGE' : 'UNKNOWN_STAGE';\nconst retryable = workflowStep === 'FETCH_SOURCE_DATA' || workflowStep === 'UPSERT_WEBHOOK' || workflowStep === 'AI_EXTRACTOR' || workflowStep === 'AI_JUDGE';\nreturn [{ json: { ...$json, workflow_step: workflowStep, retryable, error_message: errorMessage || 'Unknown workflow error' } }];"
+      },
+      "id": "classifyWorkflowError",
+      "name": "Classify Workflow Error",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1300, 520]
+    },
+    {
+      "parameters": {
+        "rules": {
+          "values": [
+            {
+              "conditions": {
+                "options": { "caseSensitive": true, "leftValue": "", "typeValidation": "strict", "version": 2 },
+                "conditions": [
+                  { "leftValue": "={{$json.retryable}}", "rightValue": true, "operator": { "type": "boolean", "operation": "true", "singleValue": true } }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "review"
+            },
+            {
+              "conditions": {
+                "options": { "caseSensitive": true, "leftValue": "", "typeValidation": "strict", "version": 2 },
+                "conditions": [
+                  { "leftValue": "={{$json.retryable}}", "rightValue": false, "operator": { "type": "boolean", "operation": "false", "singleValue": true } }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "terminal"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "routeWorkflowError",
+      "name": "Route Workflow Error",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3.2,
+      "position": [1530, 520]
+    },
+    {
+      "parameters": {
+        "values": {
+          "string": [
+            { "name": "workflow_status", "value": "QUEUE_MANUAL_REVIEW" },
+            { "name": "message", "value": "Retries exhausted; route record to manual review." }
+          ]
+        }
+      },
+      "id": "retryExhaustedReview",
+      "name": "Retry Exhausted Review",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [1760, 470]
+    },
+    {
+      "parameters": {
+        "values": {
+          "string": [
+            { "name": "workflow_status", "value": "ERROR_RECORDED" },
+            { "name": "message", "value": "Non-retryable workflow error recorded for investigation." }
+          ]
+        }
+      },
+      "id": "recordTerminalError",
+      "name": "Record Terminal Error",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [1760, 570]
+    },
+    {
+      "parameters": {
+        "jsCode": "return [{ json: { ...$json, log_target: 'workflow_error_log', log_entry: { workflow_step: $json.workflow_step, retryable: $json.retryable, error_message: $json.error_message, record_id: $json.record_id ?? $json.unique_key ?? null } } }];"
+      },
+      "id": "logWorkflowError",
+      "name": "Log Workflow Error",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1980, 570]
+    }
+  ],
+  "connections": {
+    "Manual Trigger": {
+      "main": [[{ "node": "Seed Job Config", "type": "main", "index": 0 }]]
+    },
+    "Scheduled Refresh Trigger": {
+      "main": [[{ "node": "Scheduled Refresh Config", "type": "main", "index": 0 }]]
+    },
+    "Seed Job Config": {
+      "main": [[{ "node": "Fetch Source Data", "type": "main", "index": 0 }]]
+    },
+    "Scheduled Refresh Config": {
+      "main": [[{ "node": "Fetch Source Data", "type": "main", "index": 0 }]]
+    },
+    "Fetch Source Data": {
+      "main": [[{ "node": "Normalize Webhook Payload", "type": "main", "index": 0 }]],
+      "error": [[{ "node": "Classify Workflow Error", "type": "main", "index": 0 }]]
+    },
+    "Normalize Webhook Payload": {
+      "main": [[{ "node": "Call Upsert Webhook", "type": "main", "index": 0 }]]
+    },
+    "Call Upsert Webhook": {
+      "main": [[{ "node": "Route Webhook Action", "type": "main", "index": 0 }]],
+      "error": [[{ "node": "Classify Workflow Error", "type": "main", "index": 0 }]]
+    },
+    "Route Webhook Action": {
+      "main": [
+        [{ "node": "Skip No Change", "type": "main", "index": 0 }],
+        [{ "node": "Queue AI Extraction", "type": "main", "index": 0 }],
+        [{ "node": "Backend Review Path", "type": "main", "index": 0 }]
+      ]
+    },
+    "Queue AI Extraction": {
+      "main": [[{ "node": "AI Extractor Placeholder", "type": "main", "index": 0 }]]
+    },
+    "AI Extractor Placeholder": {
+      "main": [[{ "node": "AI Judge Placeholder", "type": "main", "index": 0 }]],
+      "error": [[{ "node": "Classify Workflow Error", "type": "main", "index": 0 }]]
+    },
+    "AI Judge Placeholder": {
+      "main": [[{ "node": "Route AI Outcome", "type": "main", "index": 0 }]],
+      "error": [[{ "node": "Classify Workflow Error", "type": "main", "index": 0 }]]
+    },
+    "Route AI Outcome": {
+      "main": [
+        [{ "node": "Approved Path", "type": "main", "index": 0 }],
+        [{ "node": "Review Queue Path", "type": "main", "index": 0 }]
+      ]
+    },
+    "Classify Workflow Error": {
+      "main": [[{ "node": "Route Workflow Error", "type": "main", "index": 0 }]]
+    },
+    "Route Workflow Error": {
+      "main": [
+        [{ "node": "Retry Exhausted Review", "type": "main", "index": 0 }],
+        [{ "node": "Record Terminal Error", "type": "main", "index": 0 }]
+      ]
+    },
+    "Record Terminal Error": {
+      "main": [[{ "node": "Log Workflow Error", "type": "main", "index": 0 }]]
+    }
+  },
+  "active": false,
+  "settings": {},
+  "versionId": "initial-data-import-flow-v2-refresh-schedule",
+  "meta": {
+    "templateCredsSetupCompleted": false,
+    "description": "First-pass n8n workflow skeleton aligned with the backend internal webhook contract, including a scheduled refresh entry path."
+  },
+  "id": "initialDataImportFlow"
+}
