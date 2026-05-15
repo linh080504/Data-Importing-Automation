@@ -20,9 +20,19 @@ USER_AGENT = "beyond2-university-crawler/1.0"
 
 def _request_json(method: str, url: str, **kwargs: Any) -> Any:
     headers = {"User-Agent": USER_AGENT, **(kwargs.pop("headers", {}) or {})}
-    response = httpx.request(method, url, headers=headers, timeout=30, **kwargs)
-    response.raise_for_status()
-    return response.json()
+    try:
+        response = httpx.request(method, url, headers=headers, timeout=30, **kwargs)
+        response.raise_for_status()
+        return response.json()
+    except Exception:
+        # Retry with a more browser-like User-Agent and Accept header (helps for SPARQL endpoints)
+        try:
+            fallback_headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/115.0 Safari/537.36", "Accept": "application/sparql-results+json, application/json, text/json"}
+            response = httpx.request(method, url, headers={**fallback_headers, **headers}, timeout=30, **kwargs)
+            response.raise_for_status()
+            return response.json()
+        except Exception:
+            raise
 
 
 def _request_text(method: str, url: str, **kwargs: Any) -> str:
@@ -160,6 +170,9 @@ def _extract_wikipedia_list_rows(html: str, *, country: str | None) -> list[dict
     seen: set[str] = set()
     main_content_match = re.search(r'<div[^>]+id="mw-content-text"[^>]*>(.*?)</div>', html, flags=re.IGNORECASE | re.DOTALL)
     main_content = main_content_match.group(1) if main_content_match else html
+    # try to detect the wikipedia domain used on the page (en.wikipedia.org, vi.wikipedia.org, etc.)
+    domain_match = re.search(r'https?://[a-z0-9.-]*wikipedia.org', html, flags=re.IGNORECASE)
+    wiki_base = domain_match.group(0) if domain_match else "https://en.wikipedia.org"
     for href, inner in re.findall(r'<a[^>]+href="([^"]+)"[^>]*>(.*?)</a>', main_content, flags=re.IGNORECASE | re.DOTALL):
         if not href.startswith("/wiki/"):
             continue
@@ -169,15 +182,16 @@ def _extract_wikipedia_list_rows(html: str, *, country: str | None) -> list[dict
             continue
         name = unescape(re.sub(r"<[^>]+>", " ", inner))
         name = " ".join(name.split())
-        if len(name) < 6:
+        # allow shorter names (universities often have short names) but skip trivial tokens
+        if len(name) < 3:
             continue
         lowered = name.lower()
-        if any(term in lowered for term in ("edit", "citation", "vietnam", "list of", "ministry", "education", "contents")):
+        if any(term in lowered for term in ("edit", "citation", "contents", "references", "list of")):
             continue
         if name in seen:
             continue
         seen.add(name)
-        website = f"https://en.wikipedia.org{href}"
+        website = f"{wiki_base}{href}"
         rows.append({"name": name, "country": country, "website": website, "source_href": website})
     return rows
 
@@ -235,7 +249,17 @@ def fetch_discovery_bundle_from_source(source: object, *, country: str | None = 
 
     if source_type in {"wikipedia_category", "official_catalog_html"}:
         url = _resolve_url(config, country=country)
-        html = _request_text(str(config.get("method", "GET")).upper(), url)
+        try:
+            html = _request_text(str(config.get("method", "GET")).upper(), url)
+        except Exception as exc:
+            # Some wiki hosts return 403 for bot-like user-agents; retry with a common browser UA and Referer
+            try:
+                headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/115.0 Safari/537.36", "Referer": url}
+                response = httpx.request(str(config.get("method", "GET")).upper(), url, headers=headers, timeout=30)
+                response.raise_for_status()
+                html = response.text
+            except Exception:
+                raise
         parser_variant = str(config.get("parser_variant", "")).lower()
         if parser_variant == "ranking_html":
             rows = _extract_unirank_rows(html, country=country)

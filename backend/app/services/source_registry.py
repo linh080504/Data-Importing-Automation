@@ -20,6 +20,17 @@ DEFAULT_TRUSTED_SOURCE_CATALOG: dict[str, list[dict[str, Any]]] = {
             "supported_fields": ["name", "country", "website"],
         },
         {
+            "name": "Wikidata Vietnam universities",
+            "source_type": "wikidata_sparql",
+            "country": "Vietnam",
+            "config": {
+                "url": "https://query.wikidata.org/sparql",
+                "role": "reference",
+                "trust_level": "high",
+            },
+            "supported_fields": ["name", "country", "website"],
+        },
+        {
             "name": "Wikipedia Vietnam universities list",
             "source_type": "official_catalog_html",
             "country": "Vietnam",
