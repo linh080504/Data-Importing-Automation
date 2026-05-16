@@ -12,8 +12,8 @@ const navItems = [
 
 export function DashboardLayout({ children }: { children: ReactNode }) {
   return (
-    <div className="min-h-screen overflow-x-hidden bg-slate-50 text-slate-900">
-      <div className="grid min-h-screen min-w-0 lg:grid-cols-[260px_minmax(0,1fr)]">
+    <div className="min-h-screen w-full overflow-x-hidden bg-slate-50 text-slate-900">
+      <div className="grid min-h-screen w-full min-w-0 lg:grid-cols-[260px_minmax(0,1fr)]">
         <aside className="border-r border-slate-200 bg-slate-900 px-5 py-6 text-white">
           <div>
             <p className="text-xs uppercase tracking-[0.24em] text-sky-300">BeyondDegree</p>
@@ -47,7 +47,7 @@ export function DashboardLayout({ children }: { children: ReactNode }) {
               </div>
             </div>
           </header>
-          <main className="min-w-0 flex-1 px-6 py-6">{children}</main>
+          <main className="min-w-0 flex-1 overflow-x-hidden px-4 py-6 sm:px-6">{children}</main>
         </div>
       </div>
     </div>

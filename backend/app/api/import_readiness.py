@@ -12,6 +12,7 @@ from app.schemas.import_readiness import (
 )
 from app.services.export_mapping import map_clean_payload_to_template
 from app.services.import_readiness import evaluate_import_readiness
+from app.services.required_fields import required_fields_for_job
 
 router = APIRouter(tags=["import-readiness"])
 
@@ -27,6 +28,7 @@ def get_import_readiness(job_id: str, db: Session = Depends(get_db)) -> ImportRe
         raise HTTPException(status_code=404, detail="Clean template not found")
 
     clean_records = db.query(CleanRecord).filter(CleanRecord.job_id == job_id).all()
+    required_fields = required_fields_for_job(job, template.columns)
 
     missing_required = 0
     duplicate_count = 0
@@ -44,7 +46,7 @@ def get_import_readiness(job_id: str, db: Session = Depends(get_db)) -> ImportRe
                 template_columns=template.columns,
                 allow_rule_based_defaults=False,
             ),
-            required_fields=job.critical_fields,
+            required_fields=required_fields,
             template_columns=template.columns,
             is_duplicate=is_duplicate,
         )
@@ -60,7 +62,7 @@ def get_import_readiness(job_id: str, db: Session = Depends(get_db)) -> ImportRe
     checks = [
         ImportReadinessCheck(
             key="required_critical_fields",
-            label="Required critical fields filled",
+            label="Required identity fields filled",
             passed=missing_required == 0,
             blocker_count=missing_required,
         ),

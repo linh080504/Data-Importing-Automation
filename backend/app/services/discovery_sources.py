@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import unicodedata
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from html import unescape
 from typing import Any
@@ -200,7 +201,10 @@ def _normalize_country_alias(country: str, config: dict[str, Any]) -> str:
 
 
 def _match_key(value: object) -> str:
-    text = str(value or "").strip().lower()
+    text = unicodedata.normalize("NFKD", str(value or "").strip().lower())
+    text = "".join(char for char in text if not unicodedata.combining(char))
+    text = text.replace("đ", "d")
+    text = text.replace("viet nam", "vietnam")
     text = re.sub(r"[^a-z0-9]+", " ", text)
     return " ".join(text.split())
 

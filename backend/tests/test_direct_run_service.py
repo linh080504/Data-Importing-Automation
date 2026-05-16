@@ -368,6 +368,55 @@ def test_merge_prepared_sources_matches_source_specific_keys_by_name() -> None:
     assert merged[0].raw_payload["_merge"]["field_sources"]["website"] == "src_wikidata"
 
 
+def test_merge_prepared_sources_matches_diacritic_name_variants() -> None:
+    merged = _merge_prepared_sources(
+        [
+            (
+                SimpleNamespace(id="src_unirank"),
+                SimpleNamespace(
+                    source_type="discovery_bundle",
+                    rows=[
+                        SimpleNamespace(
+                            normalized={"name": "Ton Duc Thang University", "country": "Vietnam"},
+                            raw_payload={"name": "Ton Duc Thang University", "country": "Vietnam"},
+                            raw_text="uniRank row",
+                            unique_key="https://www.unirank.org/vn/uni/ton-duc-thang-university/",
+                        )
+                    ],
+                ),
+            ),
+            (
+                SimpleNamespace(id="src_wikipedia"),
+                SimpleNamespace(
+                    source_type="discovery_bundle",
+                    rows=[
+                        SimpleNamespace(
+                            normalized={
+                                "name": "Tôn Đức Thắng University",
+                                "country": "Viet Nam",
+                                "description": "public university in Ho Chi Minh City, Vietnam",
+                                "website": "https://tdtu.edu.vn/",
+                            },
+                            raw_payload={
+                                "name": "Tôn Đức Thắng University",
+                                "country": "Viet Nam",
+                                "description": "public university in Ho Chi Minh City, Vietnam",
+                                "website": "https://tdtu.edu.vn/",
+                            },
+                            raw_text="Wikipedia row",
+                            unique_key="https://en.wikipedia.org/wiki/Tôn_Đức_Thắng_University",
+                        )
+                    ],
+                ),
+            ),
+        ]
+    )
+
+    assert len(merged) == 1
+    assert merged[0].normalized["website"] == "https://tdtu.edu.vn/"
+    assert merged[0].raw_payload["_merge"]["field_sources"]["website"] == "src_wikipedia"
+
+
 def test_prompt_discovery_rate_limit_falls_back_to_trusted_sources(monkeypatch, job) -> None:
     session = FakeSession()
     job.source_ids = []

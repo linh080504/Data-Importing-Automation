@@ -200,7 +200,7 @@ def test_import_crawl_job_returns_400_when_readiness_blockers_exist(monkeypatch)
         SimpleNamespace(
             job_id=session.job.id,
             unique_key="row-1",
-            clean_payload={"name": "Example University", "website": "", "extra_field": "unexpected"},
+            clean_payload={"name": "", "website": "https://example.edu", "slug": "example-university"},
         )
     ]
     client = build_client(session)

@@ -111,7 +111,7 @@ def test_import_readiness_returns_ready_for_valid_job(monkeypatch) -> None:
 
 
 
-def test_import_readiness_returns_blockers_for_missing_required_and_schema_mismatch(monkeypatch) -> None:
+def test_import_readiness_allows_missing_focus_fields_when_identity_is_present(monkeypatch) -> None:
     session = FakeSession()
     session.clean_records = [
         SimpleNamespace(
@@ -130,10 +130,34 @@ def test_import_readiness_returns_blockers_for_missing_required_and_schema_misma
 
     assert response.status_code == 200
     payload = response.json()
+    assert payload["is_ready"] is True
+    blockers = {item["key"]: item["count"] for item in payload["blockers"]}
+    assert "required_critical_fields" not in blockers
+    assert "schema_match" not in blockers
+
+
+def test_import_readiness_blocks_missing_identity_field(monkeypatch) -> None:
+    session = FakeSession()
+    session.clean_records = [
+        SimpleNamespace(
+            job_id=session.job.id,
+            unique_key="row-1",
+            clean_payload={"name": "", "website": "https://example.edu", "slug": "example-university"},
+        )
+    ]
+    client = build_client(session)
+
+    monkeypatch.setattr("app.api.import_readiness.CrawlJob", FakeCrawlJobModel)
+    monkeypatch.setattr("app.api.import_readiness.CleanTemplate", FakeCleanTemplateModel)
+    monkeypatch.setattr("app.api.import_readiness.CleanRecord", FakeCleanRecordModel)
+
+    response = client.get(f"/api/v1/crawl-jobs/{session.job.id}/import-readiness")
+
+    assert response.status_code == 200
+    payload = response.json()
     assert payload["is_ready"] is False
     blockers = {item["key"]: item["count"] for item in payload["blockers"]}
     assert blockers["required_critical_fields"] == 1
-    assert "schema_match" not in blockers
 
 
 

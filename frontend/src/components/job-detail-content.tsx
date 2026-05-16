@@ -367,7 +367,7 @@ function ReviewTab({
   const nextReviewPage = Math.min(reviewTotalPages, reviewQueue.page + 1);
 
   return (
-    <div className="grid gap-6 xl:grid-cols-[0.7fr_1.3fr]">
+    <div className="grid min-w-0 max-w-full gap-6 xl:grid-cols-[minmax(20rem,26rem)_minmax(0,1fr)]">
       <Card title="Review queue" aside={<span className="text-sm text-slate-500">{reviewQueue.total} records</span>}>
         <div className="space-y-3">
           {reviewQueue.items.length === 0 ? (
@@ -422,7 +422,7 @@ function ReviewTab({
         </div>
       </Card>
 
-      <div className="space-y-6">
+      <div className="min-w-0 space-y-6">
         <Card title="Record needing review">
           <div className="space-y-3 text-sm text-slate-600">
             <p className="text-lg font-semibold text-slate-950">{reviewDetail.displayName}</p>
@@ -545,7 +545,7 @@ function ReviewTab({
 
 function CleanTab({ cleanData, criticalFields }: { cleanData: CleanDataResponse; criticalFields: string[] }) {
   return (
-    <div className="space-y-6">
+    <div className="min-w-0 max-w-full space-y-6">
       <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-6">
         <MetricCard label="Completeness" value={`${cleanData.summary.completeness}%`} subtext="Structured candidate fields that already have values" />
         <MetricCard label="Approved rows" value={String(cleanData.summary.readyCount)} subtext="Judge-approved rows that can be exported now" />

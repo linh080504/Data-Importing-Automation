@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import logging
 import re
+import unicodedata
 from dataclasses import dataclass
 from typing import Any
 from urllib.parse import quote_plus
@@ -27,6 +28,7 @@ from app.services.ai_judge import JudgeRequest, judge_extraction
 from app.services.cleaner import generate_clean_record
 from app.services.logging import log_ai_extraction
 from app.services.raw_ingest import upsert_raw_record
+from app.services.required_fields import required_fields_for_job
 from app.services.scoring import calculate_weighted_confidence
 from app.services.source_registry import build_trusted_source_discovery_input
 from app.services.supplemental_registry import build_supplemental_discovery_input
@@ -250,6 +252,7 @@ def _judge_output_for_row(
     prepared_row: "PreparedRow",
     extractor_output: AIExtractorOutput,
     rule_validation,
+    required_fields: list[str],
 ):
     request = JudgeRequest(
         raw_text=prepared_row.raw_text,
@@ -262,7 +265,7 @@ def _judge_output_for_row(
             return judge_extraction(request, client=gemini_client)
         except Exception:
             logger.exception("AI judge failed for row %s. Falling back to rule-based judge.", prepared_row.unique_key)
-    return judge_extraction(request, client=RuleBasedJudgeClient(extractor_output, job.critical_fields))
+    return judge_extraction(request, client=RuleBasedJudgeClient(extractor_output, required_fields))
 
 
 def _field_has_evidence(field_payload: object) -> bool:
@@ -424,7 +427,10 @@ def _is_empty_value(value: Any) -> bool:
 
 
 def _canonical_text(value: object) -> str:
-    text = str(value or "").strip().lower()
+    text = unicodedata.normalize("NFKD", str(value or "").strip().lower())
+    text = "".join(char for char in text if not unicodedata.combining(char))
+    text = text.replace("đ", "d")
+    text = text.replace("viet nam", "vietnam")
     text = re.sub(r"[^a-z0-9]+", " ", text)
     return " ".join(text.split())
 
@@ -1320,15 +1326,16 @@ def run_crawl_job_direct(db: Session, *, job: CrawlJob | object) -> DirectRunRes
             extracted += 1
             processed += 1
             extracted_values = {field: value.value for field, value in extractor_output.critical_fields.items()}
-            rule_validation = validate_critical_fields(extracted_values, required_fields=job.critical_fields)
-            judge_output = _judge_output_for_row(job, prepared_row, extractor_output, rule_validation)
+            required_fields = required_fields_for_job(job, template_columns)
+            rule_validation = validate_critical_fields(extracted_values, required_fields=required_fields)
+            judge_output = _judge_output_for_row(job, prepared_row, extractor_output, rule_validation, required_fields)
 
             _annotate_judge_output(
                 judge_output=judge_output,
                 merge_metadata=prepared_row.merge_metadata,
                 extracted_values=extracted_values,
             )
-            scoring = calculate_weighted_confidence(judge_output, required_fields=job.critical_fields)
+            scoring = calculate_weighted_confidence(judge_output, required_fields=required_fields)
             ai_log = _log_ai_extraction_with_merge(
                 db,
                 raw_record_id=raw_result.raw_record_id,
