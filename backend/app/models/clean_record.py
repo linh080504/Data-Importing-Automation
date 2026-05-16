@@ -1,6 +1,6 @@
 from datetime import datetime
 
-from sqlalchemy import DateTime, ForeignKey, Index, Integer, String, UniqueConstraint, func
+from sqlalchemy import DateTime, ForeignKey, Index, Integer, String, Text, UniqueConstraint, func
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -22,7 +22,7 @@ class CleanRecord(Base):
     raw_record_id: Mapped[str | None] = mapped_column(
         UUID_PK, ForeignKey("raw_records.id", ondelete="SET NULL"), nullable=True, index=True
     )
-    unique_key: Mapped[str] = mapped_column(String(100), nullable=False)
+    unique_key: Mapped[str] = mapped_column(Text, nullable=False)
     clean_payload: Mapped[dict] = mapped_column(JSONB, nullable=False)
     quality_score: Mapped[int | None] = mapped_column(Integer, nullable=True)
     status: Mapped[str] = mapped_column(String(20), nullable=False, default="NEEDS_REVIEW")

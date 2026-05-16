@@ -1,13 +1,16 @@
-import { cleanData } from "@/lib/mock-data";
 import {
   type ActivityItem,
   type CleanDataResponse,
+  type CrawledRecordDetail,
+  type CrawledRecordListItem,
+  type CrawledRecordsPage,
   type CrawlJobCreateInput,
   type CrawlJobCreateResult,
   type CrawlJobRunResult,
   type DataSourceItem,
   type DataSourceUpdateInput,
   type DataSourceUpdateResult,
+  type DeleteCrawlJobResult,
   type DeleteTemplateResult,
   type RecommendedSourcesResponse,
   type ExportReadinessResponse,
@@ -66,12 +69,23 @@ type CrawlJobListApiResponse = {
   items: CrawlJobListApiItem[];
 };
 
+type CrawlJobDeleteApiResponse = {
+  job_id: string;
+  status: string;
+  message: string;
+  deleted_raw_records: number;
+  deleted_ai_logs: number;
+  deleted_clean_records: number;
+  deleted_review_actions: number;
+};
+
 type CrawlJobDetailApiResponse = {
   job_id: string;
   country: string;
   status: JobStatus;
   source_names: string[];
   template_name: string | null;
+  template_columns?: string[] | null;
   crawl_mode?: CrawlMode;
   discovery_input?: Record<string, unknown> | null;
   updated_at: string;
@@ -92,13 +106,30 @@ type ReviewQueueApiResponse = {
   items: Array<{
     record_id: string;
     raw_record_id: string;
+    display_name: string;
+    unique_key: string;
+    source_url?: string | null;
+    source_name?: string | null;
     overall_confidence: number | null;
+    crawled_fields?: Array<{
+      field_name: string;
+      value: string | number | boolean | null;
+      source_url?: string | null;
+      source_name?: string | null;
+      source_excerpt?: string | null;
+      status: string;
+      reason?: string | null;
+    }>;
     fields_to_review: Array<{
       field_name: string;
       raw_value: string | number | boolean | null;
       suggested_value: string | number | boolean | null;
       confidence: number;
       reason: string;
+      source_excerpt?: string | null;
+      evidence_url?: string | null;
+      evidence_source?: string | null;
+      evidence_required?: boolean;
       merge_source_id?: string | null;
       merge_source_name?: string | null;
       merge_from_secondary?: boolean;
@@ -183,6 +214,7 @@ type TemplateListApiResponse = {
 
 type FieldSuggestionApiResponse = {
   template_id: string;
+  template_columns?: string[] | null;
   suggested_critical_fields: string[];
   suggested_fields_detail: Array<{
     name: string;
@@ -254,21 +286,10 @@ export type JobOverviewAndClean = {
 };
 
 const apiBaseUrl = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://127.0.0.1:8000/api/v1";
-const apiTimeoutMs = 1200;
+const apiTimeoutMs = Number.parseInt(process.env.NEXT_PUBLIC_API_TIMEOUT_MS ?? "", 10) || 15000;
 const uploadApiTimeoutMs = 10000;
 const mutationTimeoutMs = Number.parseInt(process.env.NEXT_PUBLIC_API_MUTATION_TIMEOUT_MS ?? "", 10) || 300_000;
 const pollTimeoutMs = 3000;
-
-const fallbackCountries = ["Australia", "Canada", "Germany", "Japan", "Singapore", "United Kingdom", "USA", "Vietnam"];
-const fallbackSources: DataSourceItem[] = [];
-const fallbackTemplates: TemplateItem[] = [
-  {
-    id: "tpl_mock_university_import_clean_7",
-    templateName: "University_Import_Clean-7",
-    fileName: "University_Import_Clean-7.csv",
-    columnCount: cleanData.columns.length,
-  },
-];
 
 async function fetchWithTimeout(input: string, init?: RequestInit, timeoutMs = apiTimeoutMs) {
   const controller = new AbortController();
@@ -447,6 +468,7 @@ function mapJobHeader(data: CrawlJobDetailApiResponse): JobDetailHeader {
     sourceName: sourceSummary(data.source_names),
     sourceNames: data.source_names,
     templateName: data.template_name ?? "No template",
+    templateColumns: data.template_columns ?? [],
     crawlMode: maybeCrawlMode(data.crawl_mode),
     discoveryInput: data.discovery_input ?? null,
     status: data.status,
@@ -482,13 +504,49 @@ function inferIssueType(reason: string): "missing" | "format" | "confidence" | "
   return "confidence";
 }
 
+function nonEmptyText(value: unknown): string | null {
+  if (value === null || value === undefined) return null;
+  const text = String(value).trim();
+  return text.length > 0 ? text : null;
+}
+
+function mapCrawledFields(item: ReviewQueueApiResponse["items"][number]): ReviewQueueDetail["crawledFields"] {
+  return (item.crawled_fields ?? []).map((field) => ({
+    fieldName: field.field_name,
+    value: field.value,
+    sourceUrl: field.source_url ?? null,
+    sourceName: field.source_name ?? null,
+    sourceExcerpt: field.source_excerpt ?? null,
+    status: field.status,
+    reason: field.reason ?? null,
+  }));
+}
+
+function displayNameForReviewItem(item: ReviewQueueApiResponse["items"][number], crawledFields: ReviewQueueDetail["crawledFields"]) {
+  const nameField = crawledFields.find((field) => ["name", "title", "institution_name"].includes(field.fieldName));
+  return (
+    nonEmptyText(item.display_name) ??
+    nonEmptyText(nameField?.value) ??
+    nonEmptyText(item.unique_key) ??
+    nonEmptyText(item.raw_record_id) ??
+    "Unknown school"
+  );
+}
+
+function uniqueKeyForReviewItem(item: ReviewQueueApiResponse["items"][number]) {
+  return nonEmptyText(item.unique_key) ?? nonEmptyText(item.raw_record_id) ?? nonEmptyText(item.record_id) ?? "unknown-record";
+}
+
 function emptyReviewDetail(jobId: string): ReviewQueueDetail {
   return {
     recordId: `${jobId}-no-review-needed`,
     displayName: "No records currently need review",
     uniqueKey: jobId,
+    sourceUrl: null,
+    sourceName: null,
     confidence: null,
     status: "READY_TO_EXPORT",
+    crawledFields: [],
     fields: [],
   };
 }
@@ -535,20 +593,6 @@ function requireCleanDataValue(cleanDataValue: CleanDataResponse | null, jobId: 
   return cleanDataValue;
 }
 
-function requireReviewQueue(reviewQueue: ReviewQueueData | null, jobId: string): ReviewQueueData {
-  if (!reviewQueue) {
-    throw new Error(`Review queue for job ${jobId} is unavailable.`);
-  }
-  return reviewQueue;
-}
-
-function requireExportReadiness(exportReadiness: ExportReadinessResponse | null, jobId: string): ExportReadinessResponse {
-  if (!exportReadiness) {
-    throw new Error(`Export readiness for job ${jobId} is unavailable.`);
-  }
-  return exportReadiness;
-}
-
 function toPercent(value: number, total: number) {
   if (total <= 0) return 0;
   return Math.round((value / total) * 100);
@@ -563,12 +607,17 @@ function approvedCountForDetail(detail: CrawlJobDetailApiResponse) {
 }
 
 function mapReviewItem(item: ReviewQueueApiResponse["items"][number]): ReviewQueueDetail {
+  const crawledFields = mapCrawledFields(item);
+
   return {
     recordId: item.record_id,
-    displayName: `Record ${item.record_id}`,
-    uniqueKey: item.raw_record_id,
+    displayName: displayNameForReviewItem(item, crawledFields),
+    uniqueKey: uniqueKeyForReviewItem(item),
+    sourceUrl: item.source_url ?? null,
+    sourceName: item.source_name ?? null,
     confidence: item.overall_confidence,
     status: item.fields_to_review.length > 0 ? "NEEDS_REVIEW" : "READY_TO_EXPORT",
+    crawledFields,
     fields: item.fields_to_review.map((field) => ({
       fieldName: field.field_name,
       rawValue: field.raw_value,
@@ -577,6 +626,10 @@ function mapReviewItem(item: ReviewQueueApiResponse["items"][number]): ReviewQue
       reason: field.reason,
       confidence: field.confidence,
       issueType: inferIssueType(field.reason),
+      sourceExcerpt: field.source_excerpt ?? null,
+      evidenceUrl: field.evidence_url ?? null,
+      evidenceSource: field.evidence_source ?? null,
+      evidenceRequired: Boolean(field.evidence_required),
       mergeSourceId: field.merge_source_id ?? null,
       mergeSourceName: field.merge_source_name ?? null,
       mergeFromSecondary: Boolean(field.merge_from_secondary),
@@ -586,31 +639,127 @@ function mapReviewItem(item: ReviewQueueApiResponse["items"][number]): ReviewQue
 }
 
 function mapReviewQueueData(jobId: string, data: ReviewQueueApiResponse, selectedRecordId?: string): ReviewQueueData {
-  const items = data.items.map((item) => ({
-    recordId: item.record_id,
-    displayName: `Record ${item.record_id}`,
-    uniqueKey: item.raw_record_id,
-    confidence: item.overall_confidence,
-    flaggedFieldCount: item.fields_to_review.length,
-  }));
+  const items = data.items.map((item) => {
+    const crawledFields = mapCrawledFields(item);
+    return {
+      recordId: item.record_id,
+      displayName: displayNameForReviewItem(item, crawledFields),
+      uniqueKey: uniqueKeyForReviewItem(item),
+      sourceUrl: item.source_url ?? null,
+      sourceName: item.source_name ?? null,
+      confidence: item.overall_confidence,
+      flaggedFieldCount: item.fields_to_review.length,
+      crawledFields,
+    };
+  });
 
   const selectedItem = data.items.find((item) => item.record_id === selectedRecordId) ?? data.items[0];
 
   return {
     total: data.total,
+    page: data.page,
+    limit: data.limit,
     selectedRecordId: selectedItem?.record_id ?? null,
     items,
     selectedDetail: selectedItem ? mapReviewItem(selectedItem) : emptyReviewDetail(jobId),
   };
 }
 
-function mapOverviewAndCleanFromCompare(detail: CrawlJobDetailApiResponse, compare: CompareApiResponse): JobOverviewAndClean {
+function compareFieldValue(item: CompareApiResponse["items"][number], fieldNames: string[], valueKind: "clean" | "raw" = "clean") {
+  for (const fieldName of fieldNames) {
+    const field = item.fields.find((candidate) => candidate.field_name === fieldName);
+    const value = valueKind === "clean" ? field?.clean_value : field?.raw_value;
+    const text = nonEmptyText(value);
+    if (text) return text;
+  }
+  return null;
+}
+
+function crawledRecordListItem(item: CompareApiResponse["items"][number]): CrawledRecordListItem {
+  const displayName =
+    compareFieldValue(item, ["name", "title", "institution_name"]) ??
+    nonEmptyText(item.unique_key) ??
+    item.raw_record_id;
+  const country = compareFieldValue(item, ["country"], "clean") ?? compareFieldValue(item, ["country"], "raw");
+  const sourceUrl =
+    compareFieldValue(item, ["website", "source_url", "reference_url"], "clean") ??
+    compareFieldValue(item, ["website", "source_url", "reference_url"], "raw");
+  const sourceName = item.fields.find((field) => field.merge_source_name)?.merge_source_name ?? null;
+  return {
+    rawRecordId: item.raw_record_id,
+    displayName,
+    uniqueKey: item.unique_key,
+    country,
+    sourceUrl,
+    sourceName,
+    status: item.status,
+    qualityScore: item.quality_score,
+  };
+}
+
+function sortCompareFields(fields: CompareApiResponse["items"][number]["fields"], templateColumns: string[]) {
+  const order = new Map(templateColumns.map((field, index) => [field, index]));
+  return fields.slice().sort((left, right) => {
+    const leftOrder = order.get(left.field_name) ?? Number.MAX_SAFE_INTEGER;
+    const rightOrder = order.get(right.field_name) ?? Number.MAX_SAFE_INTEGER;
+    if (leftOrder !== rightOrder) return leftOrder - rightOrder;
+    return left.field_name.localeCompare(right.field_name);
+  });
+}
+
+function crawledRecordDetail(item: CompareApiResponse["items"][number], templateColumns: string[]): CrawledRecordDetail {
+  return {
+    ...crawledRecordListItem(item),
+    fields: sortCompareFields(item.fields, templateColumns).map((field) => ({
+      fieldName: field.field_name,
+      rawValue: field.raw_value,
+      cleanValue: field.clean_value,
+      sourceName: field.merge_source_name ?? null,
+      fromSecondary: Boolean(field.merge_from_secondary),
+      conflicts: field.merge_conflicts ?? [],
+    })),
+  };
+}
+
+function mapCrawledRecordsPage(
+  compare: CompareApiResponse,
+  templateColumns: string[],
+  selectedRawRecordId?: string,
+  page = 1,
+  pageSize = 6,
+): CrawledRecordsPage {
+  const total = compare.items.length;
+  const totalPages = Math.max(1, Math.ceil(total / pageSize));
+  const safePage = Math.min(totalPages, Math.max(1, page));
+  const offset = (safePage - 1) * pageSize;
+  const pageItems = compare.items.slice(offset, offset + pageSize);
+  const selectedItem =
+    compare.items.find((item) => item.raw_record_id === selectedRawRecordId) ??
+    pageItems[0] ??
+    compare.items[0] ??
+    null;
+  return {
+    total,
+    page: safePage,
+    pageSize,
+    items: pageItems.map(crawledRecordListItem),
+    selectedRecordId: selectedItem?.raw_record_id ?? null,
+    selectedDetail: selectedItem ? crawledRecordDetail(selectedItem, templateColumns) : null,
+  };
+}
+
+function mapOverviewAndCleanFromCompare(
+  detail: CrawlJobDetailApiResponse,
+  compare: CompareApiResponse,
+  options: { selectedRawRecordId?: string; crawledRecordPage?: number } = {},
+): JobOverviewAndClean {
   const totalRecords = detail.progress.total_records;
   const cleanRecords = cleanCandidateCountForDetail(detail);
   const approvedCount = approvedCountForDetail(detail);
   const needReviewCount = detail.needs_review_count;
   const rejectedCount = detail.rejected_count ?? detail.progress.rejected ?? 0;
   const qualityScore = detail.quality_score;
+  const templateColumns = detail.template_columns ?? [];
 
   const fieldMap = new Map<string, {
     total: number;
@@ -655,7 +804,30 @@ function mapOverviewAndCleanFromCompare(detail: CrawlJobDetailApiResponse, compa
     }
   }
 
-  const entries = Array.from(fieldMap.entries());
+  if (templateColumns.length > 0) {
+    for (const field of templateColumns) {
+      const bucket = fieldMap.get(field) ?? {
+        total: 0,
+        cleanFilled: 0,
+        rawFilled: 0,
+        missing: 0,
+        primaryCount: 0,
+        secondaryCount: 0,
+        conflictCount: 0,
+      };
+      if (bucket.total < compare.items.length) {
+        bucket.missing += compare.items.length - bucket.total;
+        bucket.total = compare.items.length;
+      }
+      fieldMap.set(field, bucket);
+    }
+  }
+
+  const fieldOrder = templateColumns.length > 0 ? templateColumns : Array.from(fieldMap.keys());
+  const entries = fieldOrder.flatMap((field) => {
+    const stat = fieldMap.get(field);
+    return stat ? [[field, stat] as const] : [];
+  });
   const rawVsCleanByField = entries.slice(0, 6).map(([field, stat]) => ({
     field,
     rawValue: toPercent(stat.rawFilled, stat.total),
@@ -761,6 +933,7 @@ function mapOverviewAndCleanFromCompare(detail: CrawlJobDetailApiResponse, compa
         primaryTarget: needReviewCount > 0 ? "review" : "export",
       },
       fieldIssues,
+      crawledRecords: mapCrawledRecordsPage(compare, fieldOrder, options.selectedRawRecordId, options.crawledRecordPage),
     },
     cleanData: {
       summary: {
@@ -776,11 +949,12 @@ function mapOverviewAndCleanFromCompare(detail: CrawlJobDetailApiResponse, compa
         fieldCompleteness,
         mergeCoverage,
       },
-      columns: entries.map(([field]) => field),
+      columns: fieldOrder,
       rows: compare.items.slice(0, 10).map((item) => {
         const row: Record<string, string | number | boolean | null> = {};
-        for (const field of item.fields) {
-          row[field.field_name] = field.clean_value;
+        const fieldsByName = new Map(item.fields.map((field) => [field.field_name, field]));
+        for (const column of fieldOrder) {
+          row[column] = fieldsByName.get(column)?.clean_value ?? null;
         }
         return row;
       }),
@@ -837,7 +1011,10 @@ export async function getJobHeader(jobId: string): Promise<JobDetailHeader | nul
   }
 }
 
-export async function getJobOverview(jobId: string): Promise<OverviewResponse> {
+export async function getJobOverview(
+  jobId: string,
+  options: { selectedRawRecordId?: string; crawledRecordPage?: number } = {},
+): Promise<OverviewResponse> {
   try {
     const [detailResponse, compareResponse] = await Promise.all([
       fetchWithTimeout(`${apiBaseUrl}/crawl-jobs/${jobId}`, { cache: "no-store" }),
@@ -847,7 +1024,7 @@ export async function getJobOverview(jobId: string): Promise<OverviewResponse> {
     requireOk(compareResponse, `Loading compare data for job ${jobId}`);
     const detail = (await detailResponse.json()) as CrawlJobDetailApiResponse;
     const compare = (await compareResponse.json()) as CompareApiResponse;
-    return mapOverviewAndCleanFromCompare(detail, compare).overview;
+    return mapOverviewAndCleanFromCompare(detail, compare, options).overview;
   } catch (cause) {
     if (isTimeoutError(cause)) {
       createTimeoutFailure(apiTimeoutMs);
@@ -856,9 +1033,9 @@ export async function getJobOverview(jobId: string): Promise<OverviewResponse> {
   }
 }
 
-export async function getReviewQueue(jobId: string, selectedRecordId?: string): Promise<ReviewQueueData> {
+export async function getReviewQueue(jobId: string, selectedRecordId?: string, page = 1): Promise<ReviewQueueData> {
   try {
-    const response = await fetchWithTimeout(`${apiBaseUrl}/crawl-jobs/${jobId}/review-queue?page=1&limit=50`, {
+    const response = await fetchWithTimeout(`${apiBaseUrl}/crawl-jobs/${jobId}/review-queue?page=${page}&limit=6`, {
       cache: "no-store",
     });
     requireOk(response, `Loading review queue for job ${jobId}`);
@@ -990,7 +1167,7 @@ export async function getExportReadiness(jobId: string): Promise<ExportReadiness
       readinessScore: resolvedOverview.summary.exportReadinessScore ?? resolvedClean.summary.completeness,
       checklist: [
         { key: "review_done", label: "Review completed", status: reviewDone ? "pass" : "warning" },
-        { key: "required_fields", label: "Required fields filled", status: requiredFieldsReady ? "pass" : "warning" },
+        { key: "required_fields", label: "Focus fields filled", status: requiredFieldsReady ? "pass" : "warning" },
         { key: "schema_match", label: "Schema matches template", status: schemaMatch ? "pass" : "fail" },
         { key: "duplicates", label: "Duplicate check", status: "pass" },
         { key: "import_compatible", label: "Compatible with BeyondDegree import", status: importCompatible ? "pass" : "warning" },
@@ -1015,75 +1192,48 @@ export async function getExportReadiness(jobId: string): Promise<ExportReadiness
 
 export async function getActivityItems(jobId: string): Promise<ActivityItem[]> {
   try {
-    const [header, overviewData, reviewQueue, cleanDataValue, exportReadiness] = await Promise.all([
-      getJobHeader(jobId),
-      getJobOverview(jobId),
-      getReviewQueue(jobId),
-      getCleanData(jobId),
-      getExportReadiness(jobId),
-    ]);
-
+    const header = await getJobHeader(jobId);
     const resolvedHeader = requireHeader(header, jobId);
-    const resolvedOverview = requireOverview(overviewData, jobId);
-    const resolvedReviewQueue = requireReviewQueue(reviewQueue, jobId);
-    const resolvedCleanData = requireCleanDataValue(cleanDataValue, jobId);
-    const resolvedExportReadiness = requireExportReadiness(exportReadiness, jobId);
-
     const now = new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
-    const topBlocker = resolvedExportReadiness.blockers[0];
-    const importReady = resolvedExportReadiness.isReady;
+    const progress = resolvedHeader.progress;
+    const isComplete = resolvedHeader.status === "READY_TO_EXPORT" || resolvedHeader.status === "EXPORTED";
+    const isProcessing = resolvedHeader.status === "CRAWLING" || resolvedHeader.status === "EXTRACTING" || resolvedHeader.status === "CLEANING";
 
     return [
       {
         id: `act-${jobId}-status`,
         time: now,
-        type: resolvedHeader.status === "READY_TO_EXPORT" || resolvedHeader.status === "EXPORTED" ? "success" : "info",
+        type: isComplete ? "success" : resolvedHeader.status === "FAILED" ? "error" : "info",
         title: `Job status: ${resolvedHeader.status.replaceAll("_", " ")}`,
-        detail: `Template ${resolvedHeader.templateName} · Source ${resolvedHeader.sourceName}`,
+        detail: `Template ${resolvedHeader.templateName} / Source ${resolvedHeader.sourceName}`,
+      },
+      {
+        id: `act-${jobId}-progress`,
+        time: now,
+        type: isProcessing ? "info" : "success",
+        title: `${progress.processed ?? progress.extracted}/${progress.totalRecords} records processed`,
+        detail: `${progress.crawled} crawled / ${progress.extracted} extracted / ${progress.cleaned} cleaned`,
       },
       {
         id: `act-${jobId}-review`,
         time: now,
-        type: resolvedReviewQueue.items.length > 0 ? "warning" : "success",
-        title: resolvedReviewQueue.items.length > 0 ? "Review queue still needs attention" : "Review queue is clear",
-        detail:
-          resolvedReviewQueue.items.length > 0
-            ? `${resolvedReviewQueue.items.length} records are waiting for manual review`
-            : "No flagged records are blocking the export flow",
+        type: progress.needsReview > 0 ? "warning" : "success",
+        title: progress.needsReview > 0 ? "Review queue still needs attention" : "No review blockers in current progress",
+        detail: `${progress.needsReview} in review / ${progress.approved ?? 0} approved / ${progress.rejected ?? 0} rejected`,
       },
       {
-        id: `act-${jobId}-quality`,
+        id: `act-${jobId}-focus`,
         time: now,
-        type: (resolvedOverview.summary.qualityScore ?? 0) >= 85 ? "success" : "warning",
-        title: `Quality score ${resolvedOverview.summary.qualityScore ?? 0}%`,
-        detail: `${resolvedCleanData.summary.readyCount} ready rows · ${resolvedCleanData.summary.incompleteCount} incomplete rows`,
+        type: "info",
+        title: `${resolvedHeader.criticalFields.length} focus fields selected`,
+        detail: resolvedHeader.criticalFields.join(", ") || "No focus fields are configured",
       },
       {
-        id: `act-${jobId}-merge`,
+        id: `act-${jobId}-template`,
         time: now,
-        type:
-          resolvedExportReadiness.mergeRisk.conflictFieldCount > 0
-            ? "warning"
-            : resolvedExportReadiness.mergeRisk.secondaryFieldCount > 0
-              ? "info"
-              : "success",
-        title:
-          resolvedExportReadiness.mergeRisk.conflictFieldCount > 0
-            ? "Source disagreements still need resolution"
-            : resolvedExportReadiness.mergeRisk.secondaryFieldCount > 0
-              ? "Secondary sources supplemented this dataset"
-              : "Primary sources provided all current values",
-        detail:
-          resolvedExportReadiness.mergeRisk.conflictFieldCount > 0
-            ? `${resolvedExportReadiness.mergeRisk.conflictFieldCount} merged fields still conflict across sources`
-            : `${resolvedExportReadiness.mergeRisk.secondaryFieldCount} fields were filled from secondary sources`,
-      },
-      {
-        id: `act-${jobId}-export`,
-        time: now,
-        type: importReady ? "success" : "warning",
-        title: importReady ? "Export is ready to run" : "Export still has blockers",
-        detail: topBlocker ? `${topBlocker.label} (${topBlocker.count})` : `Readiness score ${resolvedExportReadiness.readinessScore}%`,
+        type: resolvedHeader.templateColumns.length > 0 ? "success" : "warning",
+        title: `${resolvedHeader.templateColumns.length} template columns`,
+        detail: resolvedHeader.templateColumns.slice(0, 8).join(", "),
       },
     ];
   } catch (cause) {
@@ -1162,13 +1312,16 @@ export async function getCountries(): Promise<string[]> {
   try {
     const response = await fetchWithTimeout(`${apiBaseUrl}/sources/countries`, { cache: "no-store" });
     if (!response.ok) {
-      return fallbackCountries;
+      requireOk(response, "Loading countries");
     }
 
     const data = (await response.json()) as SourceCountryListApiResponse;
-    return data.countries.length > 0 ? data.countries : fallbackCountries;
-  } catch {
-    return fallbackCountries;
+    return data.countries;
+  } catch (cause) {
+    if (isTimeoutError(cause)) {
+      createTimeoutFailure(apiTimeoutMs);
+    }
+    liveDataError("Loading countries failed", cause);
   }
 }
 
@@ -1177,7 +1330,7 @@ export async function getSources(country?: string): Promise<DataSourceItem[]> {
     const suffix = country ? `?country=${encodeURIComponent(country)}` : "";
     const response = await fetchWithTimeout(`${apiBaseUrl}/sources${suffix}`, { cache: "no-store" });
     if (!response.ok) {
-      return country ? fallbackSources.filter((source) => source.country === country) : fallbackSources;
+      requireOk(response, "Loading sources");
     }
 
     const data = (await response.json()) as SourceListApiResponse;
@@ -1191,8 +1344,11 @@ export async function getSources(country?: string): Promise<DataSourceItem[]> {
       config: source.config ?? null,
       criticalFields: source.critical_fields ?? null,
     }));
-  } catch {
-    return country ? fallbackSources.filter((source) => source.country === country) : fallbackSources;
+  } catch (cause) {
+    if (isTimeoutError(cause)) {
+      createTimeoutFailure(apiTimeoutMs);
+    }
+    liveDataError(`Loading sources${country ? ` for ${country}` : ""} failed`, cause);
   }
 }
 
@@ -1200,7 +1356,7 @@ export async function getRecommendedSources(country: string): Promise<Recommende
   try {
     const response = await fetchWithTimeout(`${apiBaseUrl}/sources/recommended?country=${encodeURIComponent(country)}`, { cache: "no-store" });
     if (!response.ok) {
-      return { country, templates: [] };
+      requireOk(response, "Loading recommended sources");
     }
 
     const data = (await response.json()) as RecommendedSourcesApiResponse;
@@ -1214,8 +1370,11 @@ export async function getRecommendedSources(country: string): Promise<Recommende
         config: template.config,
       })),
     };
-  } catch {
-    return { country, templates: [] };
+  } catch (cause) {
+    if (isTimeoutError(cause)) {
+      createTimeoutFailure(apiTimeoutMs);
+    }
+    liveDataError(`Loading recommended sources for ${country} failed`, cause);
   }
 }
 
@@ -1259,7 +1418,7 @@ export async function getTemplates(): Promise<TemplateItem[]> {
   try {
     const response = await fetchWithTimeout(`${apiBaseUrl}/templates`, { cache: "no-store" });
     if (!response.ok) {
-      return fallbackTemplates;
+      requireOk(response, "Loading templates");
     }
 
     const data = (await response.json()) as TemplateListApiResponse;
@@ -1269,8 +1428,11 @@ export async function getTemplates(): Promise<TemplateItem[]> {
       fileName: template.file_name,
       columnCount: template.column_count,
     }));
-  } catch {
-    return fallbackTemplates;
+  } catch (cause) {
+    if (isTimeoutError(cause)) {
+      createTimeoutFailure(apiTimeoutMs);
+    }
+    liveDataError("Loading templates failed", cause);
   }
 }
 
@@ -1358,42 +1520,24 @@ export async function getFieldSuggestions(templateId: string): Promise<FieldSugg
   try {
     const response = await fetchWithTimeout(`${apiBaseUrl}/fields/suggest/${templateId}`, { cache: "no-store" });
     if (!response.ok) {
-      return {
-        templateId,
-        suggestedCriticalFields: ["name", "website", "location"],
-        suggestedFieldsDetail: [
-          { name: "name", score: 98, reason: "Primary identifier for import records." },
-          { name: "website", score: 94, reason: "Needed to validate institution destination." },
-          { name: "location", score: 88, reason: "Improves matching and review confidence." },
-        ],
-        minFields: 3,
-        maxFields: 10,
-        reasoning: "Fallback suggestion set is based on the default template used in the dashboard mock flow.",
-      };
+      requireOk(response, "Loading field suggestions");
     }
 
     const data = (await response.json()) as FieldSuggestionApiResponse;
     return {
       templateId: data.template_id,
+      templateColumns: data.template_columns ?? [],
       suggestedCriticalFields: data.suggested_critical_fields,
       suggestedFieldsDetail: data.suggested_fields_detail,
       minFields: data.min_fields,
       maxFields: data.max_fields,
       reasoning: data.reasoning,
     };
-  } catch {
-    return {
-      templateId,
-      suggestedCriticalFields: ["name", "website", "location"],
-      suggestedFieldsDetail: [
-        { name: "name", score: 98, reason: "Primary identifier for import records." },
-        { name: "website", score: 94, reason: "Needed to validate institution destination." },
-        { name: "location", score: 88, reason: "Improves matching and review confidence." },
-      ],
-      minFields: 3,
-      maxFields: 10,
-      reasoning: "Fallback suggestion set is based on the default template used in the dashboard mock flow.",
-    };
+  } catch (cause) {
+    if (isTimeoutError(cause)) {
+      createTimeoutFailure(apiTimeoutMs);
+    }
+    liveDataError(`Loading field suggestions for template ${templateId} failed`, cause);
   }
 }
 
@@ -1466,6 +1610,51 @@ export async function createCrawlJob(input: CrawlJobCreateInput): Promise<CrawlJ
       createTimeoutFailure(mutationTimeoutMs);
     }
     liveDataError(`Creating crawl job for ${input.country} failed`, cause);
+  }
+}
+
+export async function deleteCrawlJob(jobId: string): Promise<DeleteCrawlJobResult> {
+  try {
+    const response = await fetchWithTimeout(
+      `${apiBaseUrl}/crawl-jobs/${jobId}`,
+      { method: "DELETE" },
+      mutationTimeoutMs,
+    );
+    const body: unknown = await response.json().catch(() => null);
+
+    if (!response.ok) {
+      return {
+        jobId: null,
+        message: null,
+        deletedRawRecords: 0,
+        deletedAiLogs: 0,
+        deletedCleanRecords: 0,
+        deletedReviewActions: 0,
+        error: formatApiErrorDetail(response.status, body),
+      };
+    }
+
+    const data = body as CrawlJobDeleteApiResponse;
+    return {
+      jobId: data.job_id,
+      message: data.message,
+      deletedRawRecords: data.deleted_raw_records,
+      deletedAiLogs: data.deleted_ai_logs,
+      deletedCleanRecords: data.deleted_clean_records,
+      deletedReviewActions: data.deleted_review_actions,
+      error: null,
+    };
+  } catch (cause) {
+    const message = cause instanceof Error ? cause.message : String(cause);
+    return {
+      jobId: null,
+      message: null,
+      deletedRawRecords: 0,
+      deletedAiLogs: 0,
+      deletedCleanRecords: 0,
+      deletedReviewActions: 0,
+      error: `Could not delete the crawl job (${message}).`,
+    };
   }
 }
 

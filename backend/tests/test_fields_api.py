@@ -59,9 +59,10 @@ def test_suggest_fields_returns_ranked_fields() -> None:
     assert response.status_code == 200
     payload = response.json()
     assert payload["template_id"] == template.id
+    assert payload["template_columns"] == ["id", "name", "location", "website", "slug", "description"]
     assert "name" in payload["suggested_critical_fields"]
     assert payload["min_fields"] == 3
-    assert payload["max_fields"] == 10
+    assert payload["max_fields"] == 6
 
 
 def test_suggest_fields_returns_404_for_missing_template() -> None:

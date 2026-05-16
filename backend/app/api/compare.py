@@ -1,5 +1,6 @@
 import json
 from typing import Any
+from urllib.parse import unquote
 
 from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
@@ -11,6 +12,16 @@ from app.models.raw_record import RawRecord
 from app.schemas.compare import CompareField, CompareRecord, CompareResponse
 
 router = APIRouter(tags=["compare"])
+
+SCHOOL_ENTITY_TERMS = (
+    "university",
+    "college",
+    "institute",
+    "academy",
+    "school",
+    "conservatory",
+    "polytechnic",
+)
 
 
 def _display_value(value: Any) -> str | int | float | bool | None:
@@ -24,6 +35,15 @@ def _display_value(value: Any) -> str | int | float | bool | None:
     if isinstance(value, dict):
         return json.dumps(value, ensure_ascii=False)
     return str(value)
+
+
+def _is_country_list_artifact(raw_payload: dict[str, Any]) -> bool:
+    source_url = str(raw_payload.get("source_url") or raw_payload.get("reference_url") or raw_payload.get("source_href") or "")
+    page_ref = unquote(source_url.rsplit("/wiki/", 1)[-1]).replace("_", " ").lower()
+    if not page_ref.startswith(("list of universities", "lists of universities", "list of colleges", "lists of colleges")):
+        return False
+    name = str(raw_payload.get("name") or raw_payload.get("title") or raw_payload.get("institution_name") or "")
+    return not any(term in name.lower() for term in SCHOOL_ENTITY_TERMS)
 
 
 @router.get("/crawl-jobs/{job_id}/compare", response_model=CompareResponse)
@@ -43,6 +63,8 @@ def get_compare(job_id: str, db: Session = Depends(get_db)) -> CompareResponse:
             continue
 
         raw_payload = raw_record.raw_payload or {}
+        if isinstance(raw_payload, dict) and _is_country_list_artifact(raw_payload):
+            continue
         clean_payload = clean_record.clean_payload or {}
         field_names = sorted(
             field_name

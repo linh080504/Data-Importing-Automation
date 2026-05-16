@@ -1,4 +1,5 @@
 from types import SimpleNamespace
+from datetime import datetime, timedelta, timezone
 from uuid import uuid4
 
 from fastapi import FastAPI
@@ -62,6 +63,20 @@ class FakeCrawlJobModel:
 
 class FakeCleanRecordModel:
     job_id = FilterField("job_id")
+    id = FilterField("id")
+
+
+class FakeRawRecordModel:
+    job_id = FilterField("job_id")
+    id = FilterField("id")
+
+
+class FakeAIExtractionLogModel:
+    raw_record_id = FilterField("raw_record_id")
+
+
+class FakeReviewActionModel:
+    clean_record_id = FilterField("clean_record_id")
 
 
 class FakeCleanTemplateDetailModel:
@@ -80,7 +95,8 @@ class FakeCleanTemplateNamedModel:
 
 
 class FakeRecord:
-    def __init__(self, job_id: str, status: str, quality_score: int | None):
+    def __init__(self, job_id: str, status: str, quality_score: int | None, *, id: str | None = None):
+        self.id = id or str(uuid4())
         self.job_id = job_id
         self.status = status
         self.quality_score = quality_score
@@ -90,6 +106,11 @@ class FakeTemplate:
     def __init__(self, id: str, template_name: str):
         self.id = id
         self.template_name = template_name
+        self.columns = [
+            {"name": "name", "order": 1},
+            {"name": "location", "order": 2},
+            {"name": "website", "order": 3},
+        ]
 
 
 class FakeSource:
@@ -176,6 +197,17 @@ class FakeListSession:
             FakeRecord(self.jobs[1].id, "NEEDS_REVIEW", 70),
             FakeRecord(self.jobs[1].id, "READY_TO_EXPORT", 78),
         ]
+        self.raw_records = [
+            SimpleNamespace(id=str(uuid4()), job_id=self.jobs[1].id),
+            SimpleNamespace(id=str(uuid4()), job_id=self.jobs[1].id),
+        ]
+        self.ai_logs = [
+            SimpleNamespace(id=str(uuid4()), raw_record_id=self.raw_records[0].id),
+            SimpleNamespace(id=str(uuid4()), raw_record_id=self.raw_records[1].id),
+        ]
+        self.review_actions = [
+            SimpleNamespace(id=str(uuid4()), clean_record_id=self.clean_records[1].id),
+        ]
 
     def query(self, model):
         if model in {FakeCleanTemplateModel, FakeCleanTemplateDetailModel, FakeCleanTemplateNamedModel}:
@@ -184,6 +216,12 @@ class FakeListSession:
             return FakeQuery(list(self.sources))
         if model is FakeCleanRecordModel:
             return FakeQuery(list(self.clean_records))
+        if model is FakeRawRecordModel:
+            return FakeQuery(list(self.raw_records))
+        if model is FakeAIExtractionLogModel:
+            return FakeQuery(list(self.ai_logs))
+        if model is FakeReviewActionModel:
+            return FakeQuery(list(self.review_actions))
         return FakeQuery(list(self.jobs))
 
     def add(self, obj):
@@ -197,10 +235,24 @@ class FakeListSession:
     def refresh(self, _obj):
         return None
 
+    def delete(self, obj):
+        for collection in (self.review_actions, self.ai_logs, self.clean_records, self.raw_records, self.jobs):
+            if obj in collection:
+                collection.remove(obj)
+                return None
+        return None
+
 
 class FakeSession:
     def __init__(self):
-        self.template = SimpleNamespace(id=str(uuid4()))
+        self.template = SimpleNamespace(
+            id=str(uuid4()),
+            columns=[
+                {"name": "name", "order": 1},
+                {"name": "location", "order": 2},
+                {"name": "website", "order": 3},
+            ],
+        )
         self.sources = [
             SimpleNamespace(id=str(uuid4())),
             SimpleNamespace(id=str(uuid4())),
@@ -409,8 +461,71 @@ def test_get_crawl_job_returns_detail(monkeypatch) -> None:
     assert payload["status"] == "NEEDS_REVIEW"
     assert payload["source_names"] == ["Government Registry"]
     assert payload["template_name"] == "University_Import_Clean-7"
+    assert payload["template_columns"] == ["name", "location", "website"]
     assert payload["progress"]["total_records"] == 20
     assert payload["clean_records"] == 2
     assert payload["needs_review_count"] == 1
     assert payload["quality_score"] == 74
     assert payload["updated_at"] == "2026-05-10T11:20:00Z"
+
+
+def test_run_crawl_job_restarts_stale_processing_job(monkeypatch) -> None:
+    session = FakeListSession()
+    job = session.jobs[0]
+    job.status = "CRAWLING"
+    job.updated_at = datetime.now(timezone.utc) - timedelta(minutes=10)
+    job.progress = {"total_records": 78, "crawled": 78, "extracted": 27, "needs_review": 27, "cleaned": 27}
+    client = build_client(session)
+
+    monkeypatch.setattr("app.api.crawl_jobs.CrawlJob", FakeCrawlJobModel)
+
+    response = client.post(f"/api/v1/crawl-jobs/{job.id}/run")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["status"] == "CRAWLING"
+    assert payload["message"] == "Pipeline started. Poll the job detail endpoint for progress."
+    assert job.progress["total_records"] == 0
+    assert job.progress["extracted"] == 0
+
+
+def test_delete_crawl_job_removes_related_records(monkeypatch) -> None:
+    session = FakeListSession()
+    job = session.jobs[1]
+    client = build_client(session)
+
+    monkeypatch.setattr("app.api.crawl_jobs.CrawlJob", FakeCrawlJobModel)
+    monkeypatch.setattr("app.api.crawl_jobs.CleanRecord", FakeCleanRecordModel)
+    monkeypatch.setattr("app.api.crawl_jobs.RawRecord", FakeRawRecordModel)
+    monkeypatch.setattr("app.api.crawl_jobs.AIExtractionLog", FakeAIExtractionLogModel)
+    monkeypatch.setattr("app.api.crawl_jobs.ReviewAction", FakeReviewActionModel)
+
+    response = client.delete(f"/api/v1/crawl-jobs/{job.id}")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["status"] == "DELETED"
+    assert payload["deleted_raw_records"] == 2
+    assert payload["deleted_ai_logs"] == 2
+    assert payload["deleted_clean_records"] == 2
+    assert payload["deleted_review_actions"] == 1
+    assert job not in session.jobs
+    assert all(record.job_id != job.id for record in session.clean_records)
+    assert session.raw_records == []
+    assert session.ai_logs == []
+    assert session.review_actions == []
+
+
+def test_delete_crawl_job_blocks_active_processing_job(monkeypatch) -> None:
+    session = FakeListSession()
+    job = session.jobs[0]
+    job.status = "EXTRACTING"
+    job.updated_at = datetime.now(timezone.utc)
+    client = build_client(session)
+
+    monkeypatch.setattr("app.api.crawl_jobs.CrawlJob", FakeCrawlJobModel)
+
+    response = client.delete(f"/api/v1/crawl-jobs/{job.id}")
+
+    assert response.status_code == 409
+    assert job in session.jobs

@@ -2,6 +2,8 @@ import { DashboardLayout } from "@/components/dashboard-layout";
 import { Card, MetricCard, PageHeader } from "@/components/ui";
 import { getCountries, getJobs, getRecommendedSources, getSources, sourceRoleLabel, sourceTone, updateSourceConfig } from "@/lib/api";
 
+export const dynamic = "force-dynamic";
+
 type SearchParams = Promise<Record<string, string | string[] | undefined>>;
 
 function readValue(value: string | string[] | undefined) {

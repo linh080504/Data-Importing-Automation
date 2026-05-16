@@ -43,7 +43,10 @@ def build_judge_prompt(request: JudgeRequest) -> str:
     )
     return (
         "You are a data QA validator. Compare the structured extraction against the raw text. "
-        "Review each extracted field for correctness, propose corrected_value when needed, and assign confidence 0-100. "
+        "Review each extracted field for correctness, evidence support, and output-format safety. "
+        "A field is correct only when its value is directly supported by source_excerpt or the raw text. "
+        "If a non-null value is not supported by evidence, mark it incorrect and set corrected_value to null unless the raw text supports a better value. "
+        "Propose corrected_value when needed, and assign confidence 0-100. "
         "Return strict JSON with this shape: "
         "{\"fields_validation\": {\"field_name\": {\"is_correct\": true|false, \"corrected_value\": ..., \"confidence\": 0-100, \"reason\": ...}}, \"overall_confidence\": 0-100, \"status\": \"APPROVED\"|\"NEEDS_REVIEW\"|\"REJECTED\", \"summary\": ...}. "
         f"Rule validation findings: {rule_summary}. "

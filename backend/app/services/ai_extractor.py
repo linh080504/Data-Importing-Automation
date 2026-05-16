@@ -30,11 +30,14 @@ def build_extractor_prompt(request: ExtractRequest) -> str:
     fields_json = json.dumps(request.critical_fields, ensure_ascii=False)
     return (
         "You are a structured data extraction engine. "
-        "Extract only the requested critical fields from the raw text. "
+        "Extract only the requested fields from the raw text. "
+        "Every non-null value must be backed by explicit evidence in the raw text. "
+        "If evidence is missing or weak, set value to null instead of guessing. "
         "Return strict JSON with this shape: "
-        "{\"critical_fields\": {\"field_name\": {\"value\": ..., \"confidence\": 0.0-1.0, \"source_excerpt\": ...}}, \"extraction_notes\": [...]} . "
+        "{\"critical_fields\": {\"field_name\": {\"value\": ..., \"confidence\": 0.0-1.0, \"source_excerpt\": ..., \"evidence_url\": ..., \"evidence_source\": ..., \"evidence_required\": true}}, \"extraction_notes\": [...]} . "
         "Do not include any fields outside the requested list. "
-        f"Requested critical fields: {fields_json}. "
+        "Use source_excerpt to quote or summarize the exact supporting text for each non-null value. "
+        f"Requested fields: {fields_json}. "
         f"Raw text: {request.raw_text}"
     )
 

@@ -26,13 +26,13 @@ export function PageHeader({
   action?: ReactNode;
 }) {
   return (
-    <div className="mb-6 flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
-      <div>
+    <div className="mb-6 flex min-w-0 flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
+      <div className="min-w-0">
         <p className="text-sm font-semibold uppercase tracking-[0.24em] text-sky-700">{eyebrow}</p>
-        <h2 className="mt-2 text-3xl font-semibold text-slate-950">{title}</h2>
-        <p className="mt-2 max-w-3xl text-sm leading-6 text-slate-600">{description}</p>
+        <h2 className="mt-2 break-words text-3xl font-semibold text-slate-950">{title}</h2>
+        <p className="mt-2 max-w-3xl break-words text-sm leading-6 text-slate-600">{description}</p>
       </div>
-      {action}
+      {action ? <div className="min-w-0 max-w-full shrink-0">{action}</div> : null}
     </div>
   );
 }
@@ -65,9 +65,9 @@ export function StatusBadge({ status }: { status: JobStatus }) {
 
 export function Card({ title, children, aside }: { title: string; children: ReactNode; aside?: ReactNode }) {
   return (
-    <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
-      <div className="mb-4 flex items-start justify-between gap-4">
-        <h3 className="text-lg font-semibold text-slate-950">{title}</h3>
+    <section className="min-w-0 overflow-hidden rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+      <div className="mb-4 flex min-w-0 items-start justify-between gap-4">
+        <h3 className="min-w-0 break-words text-lg font-semibold text-slate-950">{title}</h3>
         {aside}
       </div>
       {children}
@@ -96,9 +96,9 @@ export function Stepper({
   };
 
   return (
-    <div className="flex flex-wrap gap-3">
+    <div className="flex min-w-0 flex-wrap gap-3">
       {steps.map((step, index) => (
-        <div key={step.key} className="flex items-center gap-3">
+        <div key={step.key} className="flex min-w-0 items-center gap-3">
           <div className={`flex h-9 items-center rounded-full border px-4 text-sm font-semibold ${toneByStatus[step.status]}`}>
             {index + 1}. {step.label}
           </div>
@@ -148,10 +148,9 @@ export function PriorityBadge({ label }: { label?: string }) {
 
 export function PriorityColumnHeader({ children, isPriority }: { children: ReactNode; isPriority: boolean }) {
   return (
-    <span className="inline-flex items-center gap-1.5">
+    <span className="inline-flex min-w-0 items-center gap-1.5">
       {children}
       {isPriority ? <PriorityBadge /> : null}
     </span>
   );
 }
-

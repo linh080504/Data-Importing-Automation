@@ -64,11 +64,11 @@ The docs in `docs/ARCHITECTURE.md`, `docs/N8N_AUTOMATION_FLOW.md`, `docs/API_CON
 - Shared UI components live in `frontend/src/components`.
 - Client-side API adapters and response mapping live in `frontend/src/lib/api.ts`.
 - Shared UI/domain types live in `frontend/src/lib/types.ts`.
-- `frontend/src/lib/mock-data.ts` provides fallback data so the UI can still render when the backend is unavailable.
 
 Important frontend behavior:
 - Dashboard and job-detail pages are server components that fetch data through `src/lib/api.ts`.
 - `src/lib/api.ts` is the translation layer between backend responses and UI view models; many UI changes belong there, not in page components.
+- The UI must not invent crawl/job/template rows when the backend is unavailable; live-data errors should stay visible.
 - The UI computes operator-facing analytics/readiness summaries from backend compare/review data, including completeness, quality, merge coverage, and export readiness.
 - The dashboard is intentionally written for non-technical operators, with chart/summary-heavy presentation rather than raw API output.
 

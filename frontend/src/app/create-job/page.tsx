@@ -6,6 +6,8 @@ import { ProcessingSubmitButton } from "@/components/processing-submit-button";
 import { Card, MetricCard, PageHeader } from "@/components/ui";
 import { createCrawlJob, getCountries, getFieldSuggestions, getRecommendedSources, getSources, getTemplates } from "@/lib/api";
 
+export const dynamic = "force-dynamic";
+
 type SearchParams = Promise<Record<string, string | string[] | undefined>>;
 
 function readValue(value: string | string[] | undefined) {
@@ -15,9 +17,7 @@ function readValue(value: string | string[] | undefined) {
 async function createJobAction(formData: FormData) {
   "use server";
 
-  const countries = await getCountries();
-  const fallbackCountry = countries[0] ?? "Vietnam";
-  const country = String(formData.get("country") ?? fallbackCountry);
+  const country = String(formData.get("country") ?? "").trim();
   const cleanTemplateId = String(formData.get("templateId") ?? "").trim();
   const sourceIds = formData
     .getAll("sourceIds")
@@ -25,14 +25,21 @@ async function createJobAction(formData: FormData) {
     .filter(Boolean);
   const crawlMode = String(formData.get("crawlMode") ?? "trusted_sources") as "trusted_sources" | "prompt_discovery" | "supplemental_discovery";
   const discoveryPrompt = String(formData.get("discoveryPrompt") ?? "").trim();
-  const criticalFields = String(formData.get("criticalFields") ?? "")
+  const selectedFocusFields = formData
+    .getAll("criticalFields")
+    .map((value) => String(value).trim())
+    .filter(Boolean);
+  const typedFocusFields = String(formData.get("criticalFieldsText") ?? "")
     .split(",")
     .map((value) => value.trim())
     .filter(Boolean);
+  const criticalFields = Array.from(new Set(selectedFocusFields.length > 0 ? selectedFocusFields : typedFocusFields));
   const aiAssist = formData.get("aiAssist") === "true";
 
   const params = new URLSearchParams();
-  params.set("country", country);
+  if (country) {
+    params.set("country", country);
+  }
   if (cleanTemplateId) {
     params.set("templateId", cleanTemplateId);
   }
@@ -46,6 +53,11 @@ async function createJobAction(formData: FormData) {
   }
   params.set("aiAssist", aiAssist ? "true" : "false");
 
+  if (!country) {
+    params.set("error", "Select a live country from the configured source catalog.");
+    redirect(`/create-job?${params.toString()}`);
+  }
+
   if (!cleanTemplateId) {
     params.set("error", "Select a template before creating the job.");
     redirect(`/create-job?${params.toString()}`);
@@ -56,8 +68,8 @@ async function createJobAction(formData: FormData) {
     redirect(`/create-job?${params.toString()}`);
   }
 
-  if (criticalFields.length < 3 || criticalFields.length > 10) {
-    params.set("error", "Choose between 3 and 10 critical fields before creating the job.");
+  if (criticalFields.length < 3 || criticalFields.length > 30) {
+    params.set("error", "Choose between 3 and 30 focus fields from the selected import template before creating the job.");
     redirect(`/create-job?${params.toString()}`);
   }
 
@@ -91,8 +103,8 @@ async function createJobAction(formData: FormData) {
 export default async function CreateJobPage({ searchParams }: { searchParams: SearchParams }) {
   const resolvedSearchParams = await searchParams;
   const countries = await getCountries();
-  const fallbackCountry = countries[0] ?? "Vietnam";
-  const selectedCountry = readValue(resolvedSearchParams.country) ?? fallbackCountry;
+  const defaultCountry = countries[0] ?? "";
+  const selectedCountry = readValue(resolvedSearchParams.country) ?? defaultCountry;
   const selectedTemplateId = readValue(resolvedSearchParams.templateId);
   const errorMessage = readValue(resolvedSearchParams.error) ?? null;
 
@@ -102,18 +114,24 @@ export default async function CreateJobPage({ searchParams }: { searchParams: Se
     .filter((value): value is string => typeof value === "string" && value.length > 0);
   const selectedCriticalFields = (readValue(resolvedSearchParams.criticalFields) ?? "").split(",").filter(Boolean);
   const selectedCrawlMode = (readValue(resolvedSearchParams.crawlMode) as "trusted_sources" | "prompt_discovery" | "supplemental_discovery" | undefined) ?? "trusted_sources";
-  const discoveryPromptValue = readValue(resolvedSearchParams.discoveryPrompt) ?? `Find universities and colleges in ${selectedCountry}. Prioritize official and trustworthy sources. Return structured results including name, website, location, admissions, tuition, and quality signals when available.`;
+  const discoveryPromptValue =
+    readValue(resolvedSearchParams.discoveryPrompt) ??
+    (selectedCountry
+      ? `Find universities and colleges in ${selectedCountry}. Prioritize official and trustworthy sources. Return structured results including name, website, location, admissions, tuition, and quality signals when available.`
+      : "Find universities and colleges. Prioritize official and trustworthy sources. Return structured results including name, website, location, admissions, tuition, and quality signals when available.");
   const aiAssist = readValue(resolvedSearchParams.aiAssist) !== "false";
 
   const [sources, templates, recommendedSources] = await Promise.all([
-    getSources(selectedCountry),
+    selectedCountry ? getSources(selectedCountry) : Promise.resolve([]),
     getTemplates(),
-    getRecommendedSources(selectedCountry),
+    selectedCountry ? getRecommendedSources(selectedCountry) : Promise.resolve({ country: "", templates: [] }),
   ]);
   const activeTemplateId = selectedTemplateId ?? templates[0]?.id ?? "";
   const activeSourceIds = selectedSourceIds.length > 0 ? selectedSourceIds : sources[0] ? [sources[0].id] : [];
   const suggestions = activeTemplateId ? await getFieldSuggestions(activeTemplateId) : null;
-  const activeCriticalFields = selectedCriticalFields.length > 0 ? selectedCriticalFields : (suggestions?.suggestedCriticalFields ?? []);
+  const activeTemplateColumns = suggestions?.templateColumns ?? [];
+  const selectedTemplateCriticalFields = activeTemplateColumns.length > 0 ? selectedCriticalFields.filter((field) => activeTemplateColumns.includes(field)) : selectedCriticalFields;
+  const activeCriticalFields = selectedTemplateCriticalFields.length > 0 ? selectedTemplateCriticalFields : (suggestions?.suggestedCriticalFields ?? []);
 
   return (
     <DashboardLayout>
@@ -121,14 +139,14 @@ export default async function CreateJobPage({ searchParams }: { searchParams: Se
         <PageHeader
           eyebrow="Create job"
           title="Create and process a job"
-          description="Choose the country, template, and collection mode so the backend can run a live pipeline against real sources or a prompt-driven discovery strategy."
+          description="Choose the country, template, collection mode, and focus fields so the backend can crawl evidence before extraction, judging, review, and export."
         />
 
         <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
           <MetricCard label="Available countries" value={String(countries.length)} subtext="Current MVP source coverage" />
           <MetricCard label="Configured sources" value={String(sources.length)} subtext={`Saved in DB for ${selectedCountry}`} />
           <MetricCard label="Templates" value={String(templates.length)} subtext="Import schemas ready to use" />
-          <MetricCard label="Suggested fields" value={String(suggestions?.suggestedCriticalFields.length ?? 0)} subtext="Recommended critical fields" />
+          <MetricCard label="Suggested fields" value={String(suggestions?.suggestedCriticalFields.length ?? 0)} subtext="Recommended focus fields" />
           <MetricCard label="Trusted plan sources" value={String(recommendedSources.templates.length)} subtext={`Auto-resolved for ${selectedCountry}`} />
         </div>
 
@@ -138,7 +156,8 @@ export default async function CreateJobPage({ searchParams }: { searchParams: Se
               <div className="grid gap-4 md:grid-cols-2">
                 <label className="space-y-2 text-sm">
                   <span className="font-semibold text-slate-900">Country</span>
-                  <select name="country" defaultValue={selectedCountry} className="w-full rounded-xl border border-slate-300 px-3 py-2 text-slate-900">
+                  <select name="country" defaultValue={selectedCountry} disabled={countries.length === 0} className="w-full rounded-xl border border-slate-300 px-3 py-2 text-slate-900 disabled:bg-slate-100 disabled:text-slate-500">
+                    {countries.length === 0 ? <option value="">No live countries configured</option> : null}
                     {countries.map((country) => (
                       <option key={country} value={country}>{country}</option>
                     ))}
@@ -169,7 +188,7 @@ export default async function CreateJobPage({ searchParams }: { searchParams: Se
                   <option value="supplemental_discovery">Supplemental coverage crawl</option>
                 </select>
                 <p className="text-xs leading-5 text-slate-500">
-                  Trusted sources crawl uses the country plan to collect live source data, shape it into the template schema, then judge and review it. Prompt / PDF discovery is a separate AI-first flow that generates structured candidates from your strategy prompt before judge and human review. Supplemental coverage crawl extends the live source flow with lower-trust coverage sources.
+                  Trusted sources crawl uses the country plan to collect live source data, shape it into the template schema, then judge and review it. Prompt / PDF discovery is a separate AI-first flow that generates structured candidates from your strategy prompt before judge and human review. Supplemental coverage crawl extends the live source flow with lower-trust coverage sources. Focus fields tell the crawler and extractor where accuracy matters most; other template fields are kept only when evidence exists.
                 </p>
               </label>
 
@@ -188,7 +207,7 @@ export default async function CreateJobPage({ searchParams }: { searchParams: Se
                             <span className="rounded-full bg-sky-100 px-2 py-0.5 font-semibold text-sky-700">{source.sourceType}</span>
                           </span>
                           <span className="block text-xs leading-5 text-slate-500">
-                            {selectedCountry} · {source.supportedFields.length} supported fields
+                            {selectedCountry} / {source.supportedFields.length} supported fields
                           </span>
                         </span>
                       </div>
@@ -238,27 +257,41 @@ export default async function CreateJobPage({ searchParams }: { searchParams: Se
                 </p>
               </label>
 
-              <label className="space-y-2 text-sm">
-                <span className="font-semibold text-slate-900">Critical fields</span>
-                <input
-                  name="criticalFields"
-                  defaultValue={activeCriticalFields.join(",")}
-                  className="w-full rounded-xl border border-slate-300 px-3 py-2 text-slate-900"
-                  placeholder="name,website,location"
-                />
+              <fieldset className="space-y-2 text-sm">
+                <legend className="font-semibold text-slate-900">Focus fields</legend>
+                {activeTemplateColumns.length > 0 ? (
+                  <div className="flex min-w-0 flex-wrap gap-2 rounded-2xl border border-slate-200 bg-slate-50 p-3">
+                    {activeTemplateColumns.map((field) => {
+                      const isChecked = activeCriticalFields.includes(field);
+                      return (
+                        <label key={field} className="inline-flex max-w-full cursor-pointer items-center gap-2 rounded-full border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 shadow-sm">
+                          <input type="checkbox" name="criticalFields" value={field} defaultChecked={isChecked} className="h-3.5 w-3.5 rounded border-slate-300" />
+                          <span className="min-w-0 break-all">{field}</span>
+                        </label>
+                      );
+                    })}
+                  </div>
+                ) : (
+                  <input
+                    name="criticalFieldsText"
+                    defaultValue={activeCriticalFields.join(",")}
+                    className="w-full rounded-xl border border-slate-300 px-3 py-2 text-slate-900"
+                    placeholder="name,website,location"
+                  />
+                )}
                 <p className="text-xs leading-5 text-slate-500">
-                  Enter a comma-separated list. These fields define what the live crawl should prioritize and what the judge must treat as critical in the final structured output. MVP requires {suggestions?.minFields ?? 3} to {suggestions?.maxFields ?? 10} fields.
+                  Select fields from the CSV import template. The crawler, extractor, and judge prioritize these fields. Other template fields pass through only with source evidence; otherwise they remain blank/null. Current template allows {suggestions?.minFields ?? 3} to {suggestions?.maxFields ?? 30} focus fields.
                 </p>
-              </label>
+              </fieldset>
 
               <label className="flex items-center gap-3 text-sm text-slate-700">
                 <input type="checkbox" name="aiAssist" value="true" defaultChecked={aiAssist} className="h-4 w-4 rounded border-slate-300" />
-                Enable AI assistance for critical field extraction
+                Enable AI assistance for focus field extraction
               </label>
 
               <div className="rounded-2xl bg-sky-50 p-4 text-sm text-sky-900">
                 <p className="font-semibold">Direct processing starts on submit</p>
-                <p className="mt-2">This form calls the backend directly. Source-based modes run the live pipeline as collect → shape toward schema → judge → review/export, while prompt mode runs prompt → structured candidate → judge → review/export.</p>
+                <p className="mt-2">This form calls the backend directly. Source-based modes run collect to hash to evidence-backed extraction to judge to review/export. Prompt mode runs prompt discovery to evidence-backed candidate to judge to review/export.</p>
               </div>
 
               {errorMessage ? <div className="rounded-2xl bg-rose-50 p-4 text-sm text-rose-700">{errorMessage}</div> : null}
@@ -273,7 +306,7 @@ export default async function CreateJobPage({ searchParams }: { searchParams: Se
           </Card>
 
           <div className="space-y-6">
-            <Card title="Suggested critical fields">
+            <Card title="Suggested focus fields">
               <div className="space-y-3 text-sm text-slate-600">
                 {suggestions?.suggestedFieldsDetail.map((field) => (
                   <div key={field.name} className="rounded-2xl border border-slate-200 px-4 py-3">

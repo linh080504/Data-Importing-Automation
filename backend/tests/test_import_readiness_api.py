@@ -133,7 +133,7 @@ def test_import_readiness_returns_blockers_for_missing_required_and_schema_misma
     assert payload["is_ready"] is False
     blockers = {item["key"]: item["count"] for item in payload["blockers"]}
     assert blockers["required_critical_fields"] == 1
-    assert blockers["schema_match"] == 2
+    assert "schema_match" not in blockers
 
 
 

@@ -5,6 +5,8 @@ import { JobsTable } from "@/components/jobs-table";
 import { Card, PageHeader } from "@/components/ui";
 import { getJobs } from "@/lib/api";
 
+export const dynamic = "force-dynamic";
+
 const createJobHref = "/create-job";
 
 export default async function CrawlJobsPage() {

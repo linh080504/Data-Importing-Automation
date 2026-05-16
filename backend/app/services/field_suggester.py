@@ -4,7 +4,8 @@ from dataclasses import dataclass
 
 
 MIN_CRITICAL_FIELDS = 3
-MAX_CRITICAL_FIELDS_MVP = 10
+MAX_CRITICAL_FIELDS_ALLOWED = 30
+MAX_SUGGESTED_CRITICAL_FIELDS = 10
 
 PRIORITY_RULES: list[tuple[tuple[str, ...], int, str]] = [
     (("name",), 100, "Primary entity identifier for display and matching"),
@@ -43,4 +44,4 @@ def suggest_critical_fields(columns: list[dict]) -> list[SuggestedFieldResult]:
         results.append(SuggestedFieldResult(name=name, score=best_score, reason=best_reason))
 
     ranked = sorted(results, key=lambda item: (-item.score, item.name))
-    return ranked[:MAX_CRITICAL_FIELDS_MVP]
+    return ranked[:MAX_SUGGESTED_CRITICAL_FIELDS]

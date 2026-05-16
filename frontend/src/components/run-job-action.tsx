@@ -28,10 +28,10 @@ function ProgressBar({ value, max }: { value: number; max: number }) {
 }
 
 function phaseLabel(status: JobStatus | null): string {
-  if (status === "CRAWLING") return "Crawling sources…";
-  if (status === "EXTRACTING") return "Extracting fields…";
-  if (status === "CLEANING") return "Cleaning records…";
-  return "Processing…";
+  if (status === "CRAWLING") return "Crawling sources...";
+  if (status === "EXTRACTING") return "Extracting fields...";
+  if (status === "CLEANING") return "Cleaning records...";
+  return "Processing...";
 }
 
 export function RunJobAction({
@@ -83,7 +83,7 @@ export function RunJobAction({
           disabled={isProcessing}
           className="rounded-xl bg-sky-700 px-4 py-2 text-sm font-semibold text-white transition hover:bg-sky-800 disabled:cursor-not-allowed disabled:opacity-60"
         >
-          {isStarting ? "Starting…" : isProcessing ? "Running pipeline…" : "Run again"}
+          {isStarting ? "Starting..." : isProcessing ? "Running pipeline..." : "Run again"}
         </button>
         {!isProcessing ? (
           <p className="text-xs text-slate-500 sm:text-right">
@@ -102,13 +102,13 @@ export function RunJobAction({
           <ProgressBar value={progress.extracted} max={progress.totalRecords} />
           <div className="flex flex-wrap gap-3 text-xs text-sky-800">
             <span>Crawled {progress.crawled}</span>
-            <span>·</span>
+            <span>/</span>
             <span>Extracted {progress.extracted}</span>
-            <span>·</span>
+            <span>/</span>
             <span>Cleaned {progress.cleaned}</span>
             {progress.needsReview > 0 ? (
               <>
-                <span>·</span>
+                <span>/</span>
                 <span className="font-semibold text-amber-700">
                   {progress.needsReview} need review
                 </span>
@@ -124,11 +124,11 @@ export function RunJobAction({
           role="status"
           aria-live="polite"
         >
-          Waiting for the backend to start processing…
+          Waiting for the backend to start processing...
         </p>
       ) : null}
 
-      {polling.status && !polling.isPolling && polling.progress ? (
+      {polling.status && polling.status !== "FAILED" && !polling.isPolling && polling.progress ? (
         <p
           className="rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-900"
           role="status"

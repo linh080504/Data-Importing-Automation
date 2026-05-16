@@ -1,6 +1,7 @@
 import Link from "next/link";
 
 import { type JobListItem } from "@/lib/types";
+import { DeleteJobAction } from "@/components/delete-job-action";
 import { ProgressBar, StatusBadge } from "@/components/ui";
 
 const nextActionTone: Record<JobListItem["nextAction"]["type"], string> = {
@@ -29,6 +30,7 @@ export function JobsTable({ jobs }: { jobs: JobListItem[] }) {
             <th className="px-4 py-3 font-semibold">Quality</th>
             <th className="px-4 py-3 font-semibold">Next action</th>
             <th className="px-4 py-3 font-semibold">Updated</th>
+            <th className="px-4 py-3 font-semibold">Manage</th>
           </tr>
         </thead>
         <tbody className="divide-y divide-slate-100">
@@ -70,6 +72,9 @@ export function JobsTable({ jobs }: { jobs: JobListItem[] }) {
                 </Link>
               </td>
               <td className="px-4 py-4 text-slate-500">{job.updatedAt}</td>
+              <td className="px-4 py-4">
+                <DeleteJobAction jobId={job.id} compact />
+              </td>
             </tr>
           ))}
         </tbody>

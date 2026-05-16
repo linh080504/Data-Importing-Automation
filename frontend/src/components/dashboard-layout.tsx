@@ -12,8 +12,8 @@ const navItems = [
 
 export function DashboardLayout({ children }: { children: ReactNode }) {
   return (
-    <div className="min-h-screen bg-slate-50 text-slate-900">
-      <div className="grid min-h-screen lg:grid-cols-[260px_1fr]">
+    <div className="min-h-screen overflow-x-hidden bg-slate-50 text-slate-900">
+      <div className="grid min-h-screen min-w-0 lg:grid-cols-[260px_minmax(0,1fr)]">
         <aside className="border-r border-slate-200 bg-slate-900 px-5 py-6 text-white">
           <div>
             <p className="text-xs uppercase tracking-[0.24em] text-sky-300">BeyondDegree</p>
@@ -33,21 +33,21 @@ export function DashboardLayout({ children }: { children: ReactNode }) {
             ))}
           </nav>
         </aside>
-        <div className="flex min-h-screen flex-col">
+        <div className="flex min-h-screen min-w-0 flex-col">
           <header className="border-b border-slate-200 bg-white px-6 py-4">
-            <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
-              <div>
+            <div className="flex min-w-0 flex-col gap-4 md:flex-row md:items-center md:justify-between">
+              <div className="min-w-0">
                 <p className="text-sm font-medium text-slate-500">University data operations</p>
                 <p className="text-lg font-semibold text-slate-900">
                   Review, clean, and export import-ready records
                 </p>
               </div>
-              <div className="rounded-full border border-slate-200 bg-slate-50 px-4 py-2 text-sm text-slate-600">
+              <div className="max-w-full rounded-full border border-slate-200 bg-slate-50 px-4 py-2 text-sm text-slate-600">
                 Non-technical friendly workflow for BeyondDegree imports
               </div>
             </div>
           </header>
-          <main className="flex-1 px-6 py-6">{children}</main>
+          <main className="min-w-0 flex-1 px-6 py-6">{children}</main>
         </div>
       </div>
     </div>

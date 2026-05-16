@@ -93,6 +93,23 @@ def test_upsert_raw_record_creates_new_record_with_job_scope(monkeypatch) -> Non
     assert session.records[0].job_id == "job_1"
 
 
+def test_upsert_raw_record_preserves_long_source_url_key(monkeypatch) -> None:
+    session = FakeSession()
+    monkeypatch.setattr("app.services.raw_ingest.RawRecord", FakeRawRecordModel)
+    unique_key = "https://www.unirank.org/vn/uni/ho-chi-minh-city-university-of-foreign-languages-and-information-technology/"
+
+    result = upsert_raw_record(
+        session,
+        job_id="job_1",
+        source_id="src_1",
+        unique_key=unique_key,
+        raw_payload={"name": "Ho Chi Minh City University of Foreign Languages and Information Technology"},
+    )
+
+    assert result.action == "INSERTED"
+    assert session.records[0].unique_key == unique_key
+
+
 
 def test_upsert_raw_record_updates_existing_record_within_same_job(monkeypatch) -> None:
     existing = SimpleNamespace(

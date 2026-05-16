@@ -1,6 +1,6 @@
 from datetime import datetime
 
-from sqlalchemy import DateTime, ForeignKey, Index, String, UniqueConstraint, func
+from sqlalchemy import DateTime, ForeignKey, Index, String, Text, UniqueConstraint, func
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -22,7 +22,7 @@ class RawRecord(Base):
     source_id: Mapped[str] = mapped_column(
         UUID_PK, ForeignKey("data_sources.id", ondelete="CASCADE"), nullable=False, index=True
     )
-    unique_key: Mapped[str] = mapped_column(String(100), nullable=False)
+    unique_key: Mapped[str] = mapped_column(Text, nullable=False)
     record_hash: Mapped[str] = mapped_column(String(64), nullable=False)
     raw_payload: Mapped[dict] = mapped_column(JSONB, nullable=False)
     crawled_at: Mapped[datetime] = mapped_column(

@@ -35,7 +35,7 @@ class CrawlJobCreate(BaseModel):
     source_ids: list[str] = Field(min_length=0, default_factory=list)
     crawl_mode: Literal["trusted_sources", "prompt_discovery", "supplemental_discovery"] = "trusted_sources"
     discovery_input: CrawlDiscoveryInput | None = None
-    critical_fields: list[str] = Field(min_length=3, max_length=10)
+    critical_fields: list[str] = Field(min_length=3, max_length=30)
     clean_template_id: str
     ai_assist: bool = True
 
@@ -160,6 +160,7 @@ class CrawlJobDetailResponse(BaseModel):
     status: str
     source_names: list[str]
     template_name: str | None
+    template_columns: list[str] = Field(default_factory=list)
     crawl_mode: str = "trusted_sources"
     discovery_input: dict[str, Any] | None = None
     updated_at: str

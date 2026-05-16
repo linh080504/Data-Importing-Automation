@@ -179,6 +179,42 @@ def test_build_clean_payload_keeps_extracted_value_when_judge_correction_missing
     }
 
 
+def test_build_clean_payload_passes_through_source_backed_raw_fields() -> None:
+    payload = build_clean_payload(
+        SimpleNamespace(
+            ai_1_payload={
+                "critical_fields": {
+                    "name": {"value": "Example University"},
+                }
+            },
+            ai_2_validation={
+                "judge_output": {
+                    "fields_validation": {
+                        "name": {"is_correct": True},
+                    }
+                }
+            },
+        ),
+        raw_payload={
+            "name": "Example University",
+            "country": "Vietnam",
+            "source_url": "https://en.wikipedia.org/wiki/Example_University",
+            "reference_url": "https://en.wikipedia.org/wiki/List_of_universities_in_Vietnam",
+            "source_href": "https://en.wikipedia.org/wiki/Example_University",
+            "sources": {"src": {"name": "Example University"}},
+            "_merge": {"field_sources": {"name": "src"}},
+        },
+    )
+
+    assert payload["name"] == "Example University"
+    assert payload["country"] == "Vietnam"
+    assert payload["source_url"] == "https://en.wikipedia.org/wiki/Example_University"
+    assert payload["reference_url"] == "https://en.wikipedia.org/wiki/List_of_universities_in_Vietnam"
+    assert payload["source_href"] == "https://en.wikipedia.org/wiki/Example_University"
+    assert "sources" not in payload
+    assert "_merge" not in payload
+
+
 
 def test_build_clean_payload_ignores_non_dict_validation_entries() -> None:
     payload = build_clean_payload(
@@ -199,3 +235,54 @@ def test_build_clean_payload_ignores_non_dict_validation_entries() -> None:
     )
 
     assert payload == {"name": "Example University"}
+
+
+def test_build_clean_payload_nulls_evidence_required_value_without_evidence() -> None:
+    payload = build_clean_payload(
+        SimpleNamespace(
+            ai_1_payload={
+                "critical_fields": {
+                    "financials": {
+                        "value": "INR 54k-75k ($650-900)",
+                        "confidence": 0.72,
+                        "evidence_required": True,
+                    },
+                }
+            },
+            ai_2_validation={
+                "judge_output": {
+                    "fields_validation": {
+                        "financials": {"is_correct": True, "corrected_value": None},
+                    }
+                }
+            },
+        )
+    )
+
+    assert payload == {"financials": None}
+
+
+def test_build_clean_payload_nulls_incorrect_value_without_correction() -> None:
+    payload = build_clean_payload(
+        SimpleNamespace(
+            ai_1_payload={
+                "critical_fields": {
+                    "global_rank": {
+                        "value": "top university",
+                        "confidence": 0.3,
+                        "source_excerpt": "top university",
+                        "evidence_required": True,
+                    },
+                }
+            },
+            ai_2_validation={
+                "judge_output": {
+                    "fields_validation": {
+                        "global_rank": {"is_correct": False, "corrected_value": None},
+                    }
+                }
+            },
+        )
+    )
+
+    assert payload == {"global_rank": None}

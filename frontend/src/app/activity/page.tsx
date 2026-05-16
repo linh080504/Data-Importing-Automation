@@ -1,12 +1,13 @@
 import { DashboardLayout } from "@/components/dashboard-layout";
 import { Card, MetricCard, PageHeader } from "@/components/ui";
 import { getActivityItems, getJobs } from "@/lib/api";
-import { activityItems as fallbackActivityItems } from "@/lib/mock-data";
+
+export const dynamic = "force-dynamic";
 
 export default async function ActivityPage() {
   const jobs = await getJobs();
   const firstJobId = jobs[0]?.id;
-  const items = firstJobId ? await getActivityItems(firstJobId) : fallbackActivityItems;
+  const items = firstJobId ? await getActivityItems(firstJobId) : [];
   const successCount = items.filter((item) => item.type === "success").length;
   const warningCount = items.filter((item) => item.type === "warning").length;
 
@@ -23,11 +24,16 @@ export default async function ActivityPage() {
           <MetricCard label="Events" value={String(items.length)} subtext="Recent system activity" />
           <MetricCard label="Successful steps" value={String(successCount)} subtext="Completed without operator action" />
           <MetricCard label="Warnings" value={String(warningCount)} subtext="Need follow-up attention" />
-          <MetricCard label="Latest event" value={items[0]?.time ?? "—"} subtext={items[0]?.title ?? "No activity yet"} />
+          <MetricCard label="Latest event" value={items[0]?.time ?? "N/A"} subtext={items[0]?.title ?? "No activity yet"} />
         </div>
 
         <Card title="Activity log">
           <div className="space-y-4">
+            {items.length === 0 ? (
+              <div className="rounded-2xl border border-dashed border-slate-300 px-4 py-4 text-sm text-slate-600">
+                No live activity yet. Create or run a crawl job to populate this feed.
+              </div>
+            ) : null}
             {items.map((item) => (
               <div key={item.id} className="flex items-start justify-between gap-4 rounded-2xl border border-slate-200 px-4 py-4">
                 <div>

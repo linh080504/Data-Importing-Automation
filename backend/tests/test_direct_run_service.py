@@ -4,7 +4,7 @@ import httpx
 import pytest
 
 from app.schemas.ai_output import AIExtractorOutput, AIJudgeOutput
-from app.services.direct_run import DirectRunError, _merge_prepared_sources, fetch_source_rows, prepare_source_rows, run_crawl_job_direct
+from app.services.direct_run import DirectRunError, _merge_prepared_sources, _resolved_plan_sources, fetch_source_rows, prepare_source_rows, run_crawl_job_direct
 from app.services.gemini_client import GeminiRateLimitError
 
 
@@ -52,6 +52,7 @@ class FakeSession:
     def __init__(self, *, sources=None):
         self.sources = list(sources or [])
         self.raw_records = []
+        self.clean_records = []
         self.commits = 0
 
     def query(self, model):
@@ -67,6 +68,9 @@ class FakeSession:
 
     def commit(self):
         self.commits += 1
+
+    def rollback(self):
+        return None
 
     def refresh(self, _obj):
         return None
@@ -303,6 +307,67 @@ def test_merge_prepared_sources_prefers_primary_and_fills_missing_values() -> No
     assert merged[0].raw_text == "Primary row\n\nSecondary row"
 
 
+def test_merge_prepared_sources_matches_source_specific_keys_by_name() -> None:
+    merged = _merge_prepared_sources(
+        [
+            (
+                SimpleNamespace(id="src_wikipedia"),
+                SimpleNamespace(
+                    source_type="discovery_bundle",
+                    rows=[
+                        SimpleNamespace(
+                            normalized={
+                                "name": "Vietnam National University, Hanoi",
+                                "country": "Vietnam",
+                                "source_url": "https://en.wikipedia.org/wiki/Vietnam_National_University,_Hanoi",
+                            },
+                            raw_payload={
+                                "name": "Vietnam National University, Hanoi",
+                                "country": "Vietnam",
+                                "source_url": "https://en.wikipedia.org/wiki/Vietnam_National_University,_Hanoi",
+                            },
+                            raw_text="Wikipedia row",
+                            unique_key="https://en.wikipedia.org/wiki/Vietnam_National_University,_Hanoi",
+                        )
+                    ],
+                ),
+            ),
+            (
+                SimpleNamespace(id="src_wikidata"),
+                SimpleNamespace(
+                    source_type="discovery_bundle",
+                    rows=[
+                        SimpleNamespace(
+                            normalized={
+                                "name": "Vietnam National University, Hanoi",
+                                "country": "Vietnam",
+                                "website": "https://www.vnu.edu.vn",
+                                "description": "public university system in Vietnam",
+                                "source_url": "https://www.wikidata.org/wiki/Q3918",
+                            },
+                            raw_payload={
+                                "name": "Vietnam National University, Hanoi",
+                                "country": "Vietnam",
+                                "website": "https://www.vnu.edu.vn",
+                                "description": "public university system in Vietnam",
+                                "source_url": "https://www.wikidata.org/wiki/Q3918",
+                            },
+                            raw_text="Wikidata row",
+                            unique_key="Q3918",
+                        )
+                    ],
+                ),
+            ),
+        ]
+    )
+
+    assert len(merged) == 1
+    assert merged[0].unique_key == "https://en.wikipedia.org/wiki/Vietnam_National_University,_Hanoi"
+    assert merged[0].normalized["website"] == "https://www.vnu.edu.vn"
+    assert merged[0].normalized["description"] == "public university system in Vietnam"
+    assert merged[0].raw_payload["_merge"]["field_sources"]["website"] == "src_wikidata"
+
+
 def test_prompt_discovery_rate_limit_falls_back_to_trusted_sources(monkeypatch, job) -> None:
     session = FakeSession()
     job.source_ids = []
@@ -415,6 +480,64 @@ def test_prompt_discovery_rate_limit_surfaces_clear_error_without_fallback(monke
         run_crawl_job_direct(session, job=job)
 
     assert "rate-limited" in str(exc_info.value)
+
+
+def test_resolved_plan_sources_skips_failed_source(monkeypatch) -> None:
+    session = FakeSession()
+    entries = [{"name": "Good source"}, {"name": "Blocked source"}]
+
+    monkeypatch.setattr(
+        "app.services.direct_run._persisted_source_for_plan_entry",
+        lambda db, entry, *, country: SimpleNamespace(id=entry["name"], source_name=entry["name"], config={}),
+    )
+
+    def fake_fetch_bundle(source, *, country, focus_fields=None):
+        if source.source_name == "Blocked source":
+            raise httpx.HTTPStatusError(
+                "403 Forbidden",
+                request=httpx.Request("GET", "https://example.edu/blocked"),
+                response=httpx.Response(403),
+            )
+        return SimpleNamespace(
+            source_id="good_source",
+            source_name="Good source",
+            rows=[
+                SimpleNamespace(
+                    normalized={"name": "Good University"},
+                    raw_payload={"name": "Good University"},
+                    raw_text="Good University",
+                    unique_key="good_1",
+                )
+            ],
+        )
+
+    monkeypatch.setattr("app.services.direct_run.fetch_discovery_bundle_from_source", fake_fetch_bundle)
+
+    resolved = _resolved_plan_sources(session, entries, country="Vietnam")
+
+    assert len(resolved) == 1
+    assert resolved[0][0].source_name == "Good source"
+    assert len(resolved[0][1].rows) == 1
+
+
+def test_resolved_plan_sources_fails_when_all_sources_fail(monkeypatch) -> None:
+    session = FakeSession()
+    entries = [{"name": "Blocked source"}]
+
+    monkeypatch.setattr(
+        "app.services.direct_run._persisted_source_for_plan_entry",
+        lambda db, entry, *, country: SimpleNamespace(id=entry["name"], source_name=entry["name"], config={}),
+    )
+    monkeypatch.setattr(
+        "app.services.direct_run.fetch_discovery_bundle_from_source",
+        lambda source, *, country, focus_fields=None: (_ for _ in ()).throw(RuntimeError("403 Forbidden")),
+    )
+
+    with pytest.raises(DirectRunError) as exc_info:
+        _resolved_plan_sources(session, entries, country="Vietnam")
+
+    assert "All configured sources failed" in str(exc_info.value)
+    assert "Blocked source" in str(exc_info.value)
 
 
 def test_supplemental_discovery_resolves_supplemental_plan(monkeypatch, job) -> None:
@@ -626,6 +749,214 @@ def test_run_crawl_job_direct_processes_rows(monkeypatch, job) -> None:
     assert job.progress["total_records"] == 1
 
 
+def test_run_crawl_job_direct_skips_failed_row_and_continues(monkeypatch, job) -> None:
+    session = FakeSession(
+        sources=[
+            SimpleNamespace(
+                id="src_1",
+                config={"source_type": "json_api", "url": "https://example.edu/api", "items_path": "data", "unique_key_field": "id"},
+            )
+        ]
+    )
+    job.ai_assist = False
+    monkeypatch.setattr("app.services.direct_run.DataSource", FakeDataSourceModel)
+    monkeypatch.setattr("app.services.direct_run.RawRecord", FakeRawRecordModel)
+    monkeypatch.setattr(
+        "app.services.direct_run.prepare_source_rows",
+        lambda source, **kwargs: SimpleNamespace(
+            source_type="json_api",
+            rows=[
+                SimpleNamespace(
+                    normalized={"id": "bad", "name": "Bad University", "website": "https://bad.example.edu", "email": "bad@example.edu"},
+                    raw_payload={"id": "bad", "name": "Bad University", "website": "https://bad.example.edu", "email": "bad@example.edu"},
+                    raw_text="Bad University https://bad.example.edu bad@example.edu",
+                    unique_key="bad",
+                ),
+                SimpleNamespace(
+                    normalized={"id": "good", "name": "Good University", "website": "https://good.example.edu", "email": "good@example.edu"},
+                    raw_payload={"id": "good", "name": "Good University", "website": "https://good.example.edu", "email": "good@example.edu"},
+                    raw_text="Good University https://good.example.edu good@example.edu",
+                    unique_key="good",
+                ),
+            ],
+        ),
+    )
+
+    def fake_upsert(db, **kwargs):
+        if kwargs["unique_key"] == "bad":
+            raise RuntimeError("row-level ingest failure")
+        raw_id = f"raw_{len(db.raw_records) + 1}"
+        db.raw_records.append(
+            SimpleNamespace(
+                id=raw_id,
+                job_id=kwargs["job_id"],
+                unique_key=kwargs["unique_key"],
+                raw_payload=kwargs["raw_payload"],
+            )
+        )
+        return SimpleNamespace(raw_record_id=raw_id, action="INSERTED", changed=True)
+
+    monkeypatch.setattr("app.services.direct_run.upsert_raw_record", fake_upsert)
+    monkeypatch.setattr(
+        "app.services.direct_run.log_ai_extraction",
+        lambda db, **kwargs: SimpleNamespace(
+            overall_confidence=96,
+            ai_1_payload=kwargs["extractor_output"].model_dump(mode="json"),
+            ai_2_validation={
+                "judge_output": kwargs["judge_output"].model_dump(mode="json"),
+                "scoring": {"decision": kwargs["scoring"].decision},
+            },
+        ),
+    )
+    monkeypatch.setattr(
+        "app.services.direct_run.generate_clean_record",
+        lambda db, *, raw_record, ai_log: SimpleNamespace(
+            clean_record=SimpleNamespace(status="APPROVED"),
+            created=True,
+        ),
+    )
+
+    result = run_crawl_job_direct(session, job=job)
+
+    assert result.total_records == 2
+    assert result.processed == 2
+    assert result.extracted == 1
+    assert result.skipped == 1
+    assert result.rejected == 1
+    assert result.cleaned == 1
+    assert result.status == "NEEDS_REVIEW"
+
+
+def test_run_crawl_job_direct_reprocesses_unchanged_raw_without_clean_record(monkeypatch, job) -> None:
+    session = FakeSession(
+        sources=[
+            SimpleNamespace(
+                id="src_1",
+                config={"source_type": "json_api", "url": "https://example.edu/api", "items_path": "data", "unique_key_field": "id"},
+            )
+        ]
+    )
+    existing_raw = SimpleNamespace(
+        id="raw_1",
+        job_id=job.id,
+        unique_key="uni_1",
+        raw_payload={
+            "id": "uni_1",
+            "name": "Example University",
+            "website": "https://example.edu",
+        },
+    )
+    session.raw_records.append(existing_raw)
+    monkeypatch.setattr("app.services.direct_run.DataSource", FakeDataSourceModel)
+    monkeypatch.setattr("app.services.direct_run.RawRecord", FakeRawRecordModel)
+    monkeypatch.setattr(
+        "app.services.direct_run.prepare_source_rows",
+        lambda source, **kwargs: SimpleNamespace(
+            source_type="json_api",
+            rows=[
+                SimpleNamespace(
+                    normalized={"id": "uni_1", "name": "Example University", "website": "https://example.edu"},
+                    raw_payload={"id": "uni_1", "name": "Example University", "website": "https://example.edu"},
+                    raw_text="Example University https://example.edu",
+                    unique_key="uni_1",
+                )
+            ],
+        ),
+    )
+    monkeypatch.setattr(
+        "app.services.direct_run.upsert_raw_record",
+        lambda db, **kwargs: SimpleNamespace(raw_record_id="raw_1", action="NO_CHANGE", changed=False),
+    )
+    monkeypatch.setattr(
+        "app.services.direct_run.generate_clean_record",
+        lambda db, *, raw_record, ai_log: SimpleNamespace(
+            clean_record=SimpleNamespace(status="APPROVED"),
+            created=True,
+        ),
+    )
+
+    result = run_crawl_job_direct(session, job=job)
+
+    assert result.processed == 1
+    assert result.clean_candidates == 1
+    assert result.skipped == 0
+    assert result.status == "READY_TO_EXPORT"
+
+
+def test_run_crawl_job_direct_reprocesses_unchanged_raw_when_clean_payload_is_blank(monkeypatch, job) -> None:
+    session = FakeSession(
+        sources=[
+            SimpleNamespace(
+                id="src_1",
+                config={"source_type": "json_api", "url": "https://example.edu/api", "items_path": "data", "unique_key_field": "id"},
+            )
+        ]
+    )
+    session.raw_records.append(
+        SimpleNamespace(
+            id="raw_1",
+            job_id=job.id,
+            unique_key="uni_1",
+            raw_payload={
+                "id": "uni_1",
+                "name": "Example University",
+                "source_url": "https://en.wikipedia.org/wiki/Example_University",
+                "website": "https://example.edu",
+            },
+        )
+    )
+    session.clean_records.append(
+        SimpleNamespace(
+            job_id=job.id,
+            unique_key="uni_1",
+            clean_payload={"name": "Example University", "source_url": None, "website": None},
+            status="NEEDS_REVIEW",
+        )
+    )
+    monkeypatch.setattr("app.services.direct_run.DataSource", FakeDataSourceModel)
+    monkeypatch.setattr("app.services.direct_run.RawRecord", FakeRawRecordModel)
+    monkeypatch.setattr(
+        "app.services.direct_run.prepare_source_rows",
+        lambda source, **kwargs: SimpleNamespace(
+            source_type="json_api",
+            rows=[
+                SimpleNamespace(
+                    normalized={
+                        "id": "uni_1",
+                        "name": "Example University",
+                        "source_url": "https://en.wikipedia.org/wiki/Example_University",
+                        "website": "https://example.edu",
+                    },
+                    raw_payload={
+                        "id": "uni_1",
+                        "name": "Example University",
+                        "source_url": "https://en.wikipedia.org/wiki/Example_University",
+                        "website": "https://example.edu",
+                    },
+                    raw_text="Example University https://example.edu",
+                    unique_key="uni_1",
+                )
+            ],
+        ),
+    )
+    monkeypatch.setattr(
+        "app.services.direct_run.upsert_raw_record",
+        lambda db, **kwargs: SimpleNamespace(raw_record_id="raw_1", action="NO_CHANGE", changed=False),
+    )
+    monkeypatch.setattr(
+        "app.services.direct_run.generate_clean_record",
+        lambda db, *, raw_record, ai_log: SimpleNamespace(
+            clean_record=SimpleNamespace(status="APPROVED"),
+            created=False,
+        ),
+    )
+
+    result = run_crawl_job_direct(session, job=job)
+
+    assert result.processed == 1
+    assert result.skipped == 0
+
+
 def test_run_crawl_job_direct_marks_review_needed(monkeypatch, job) -> None:
     session = FakeSession(
         sources=[SimpleNamespace(id="src_1", config={"source_type": "json_api", "url": "https://example.edu/api"})]
@@ -710,3 +1041,62 @@ def test_run_crawl_job_direct_marks_review_needed(monkeypatch, job) -> None:
     assert result.needs_review == 1
     assert result.status == "NEEDS_REVIEW"
     assert job.progress["needs_review"] == 1
+
+
+def test_source_based_run_does_not_call_ai_judge_when_focus_fields_are_missing(monkeypatch, job) -> None:
+    session = FakeSession(
+        sources=[SimpleNamespace(id="src_1", config={"source_type": "json_api", "url": "https://example.edu/api"})]
+    )
+    job.ai_assist = True
+    job.critical_fields = ["name", "website", "email"]
+    monkeypatch.setattr("app.services.direct_run.DataSource", FakeDataSourceModel)
+    monkeypatch.setattr("app.services.direct_run.RawRecord", FakeRawRecordModel)
+    monkeypatch.setattr(
+        "app.services.direct_run.prepare_source_rows",
+        lambda source, **kwargs: SimpleNamespace(
+            source_type="json_api",
+            rows=[
+                SimpleNamespace(
+                    normalized={"id": "uni_1", "name": "Example University", "source_url": "https://example.edu/profile"},
+                    raw_payload={"id": "uni_1", "name": "Example University", "source_url": "https://example.edu/profile"},
+                    raw_text="Example University",
+                    unique_key="uni_1",
+                )
+            ],
+        ),
+    )
+    monkeypatch.setattr(
+        "app.services.direct_run.upsert_raw_record",
+        lambda db, **kwargs: (
+            db.raw_records.append(SimpleNamespace(id="raw_1", job_id=kwargs["job_id"], unique_key=kwargs["unique_key"], raw_payload=kwargs["raw_payload"])),
+            SimpleNamespace(raw_record_id="raw_1", action="INSERTED", changed=True)
+        )[1],
+    )
+    monkeypatch.setattr(
+        "app.services.direct_run.build_gemini_client",
+        lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("AI judge should not be called for rows missing required focus fields")),
+    )
+    monkeypatch.setattr(
+        "app.services.direct_run.log_ai_extraction",
+        lambda db, **kwargs: SimpleNamespace(
+            overall_confidence=60,
+            ai_1_payload=kwargs["extractor_output"].model_dump(mode="json"),
+            ai_2_validation={
+                "judge_output": kwargs["judge_output"].model_dump(mode="json"),
+                "scoring": {"decision": kwargs["scoring"].decision},
+            },
+        ),
+    )
+    monkeypatch.setattr(
+        "app.services.direct_run.generate_clean_record",
+        lambda db, *, raw_record, ai_log: SimpleNamespace(
+            clean_record=SimpleNamespace(status="NEEDS_REVIEW"),
+            created=True,
+        ),
+    )
+
+    result = run_crawl_job_direct(session, job=job)
+
+    assert result.total_records == 1
+    assert result.processed == 1
+    assert result.needs_review == 1

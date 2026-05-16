@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 from dataclasses import dataclass
 from typing import Any
 from urllib.parse import quote_plus
@@ -11,6 +12,8 @@ from sqlalchemy.orm import Session
 
 from app.core.config import get_settings
 from app.models.crawl_job import CrawlJob
+from app.models.clean_record import CleanRecord
+from app.models.clean_template import CleanTemplate
 from app.models.data_source import DataSource
 from app.models.raw_record import RawRecord
 from app.schemas.ai_output import AIExtractorOutput
@@ -78,17 +81,130 @@ def _build_progress(
     }
 
 
-def _build_clean_candidate_from_row(prepared_row: "PreparedRow", critical_fields: list[str]) -> AIExtractorOutput:
+def _is_blank_candidate_value(value: Any) -> bool:
+    return value in (None, "", [], {})
+
+
+def _column_names(template_columns: list[dict[str, Any]] | None) -> list[str]:
+    if not template_columns:
+        return []
+    return [
+        str(column.get("name")).strip()
+        for column in sorted(template_columns, key=lambda item: item.get("order", 0) if isinstance(item.get("order", 0), int) else 0)
+        if column.get("name") and str(column.get("name")).strip()
+    ]
+
+
+def _is_system_or_derived_field(field_name: str) -> bool:
+    return field_name in {"id", "slug"}
+
+
+def _target_fields_for_row(
+    prepared_row: "PreparedRow",
+    critical_fields: list[str],
+    template_columns: list[dict[str, Any]] | None = None,
+) -> list[str]:
+    template_fields = _column_names(template_columns)
+    template_field_set = set(template_fields)
+    row_fields = [
+        field_name
+        for field_name, value in prepared_row.normalized.items()
+        if not field_name.startswith("_")
+        and not _is_system_or_derived_field(field_name)
+        and not _is_blank_candidate_value(value)
+        and (not template_field_set or field_name in template_field_set or field_name in critical_fields)
+    ]
+
+    ordered_fields: list[str] = []
+    for field_name in [*critical_fields, *template_fields, *sorted(row_fields)]:
+        if not field_name or field_name in ordered_fields:
+            continue
+        if _is_system_or_derived_field(field_name):
+            continue
+        if field_name in critical_fields or field_name in row_fields:
+            ordered_fields.append(field_name)
+    return ordered_fields
+
+
+def _evidence_url_for_field(raw_payload: dict[str, Any], field_name: str) -> str | None:
+    merge_metadata = raw_payload.get("_merge") or {}
+    field_sources = merge_metadata.get("field_sources") or {}
+    source_payloads = raw_payload.get("sources") or {}
+    source_id = field_sources.get(field_name)
+    candidate_payloads: list[dict[str, Any]] = []
+    if source_id and isinstance(source_payloads, dict) and isinstance(source_payloads.get(source_id), dict):
+        candidate_payloads.append(source_payloads[source_id])
+    candidate_payloads.append(raw_payload)
+
+    for payload in candidate_payloads:
+        for key in ("source_url", "source_href", "url", "website", "admissions_page_link"):
+            value = payload.get(key)
+            if isinstance(value, str) and value.strip():
+                return value.strip()
+    return None
+
+
+def _evidence_excerpt_for_field(*, field_name: str, value: Any, raw_text: str) -> str | None:
+    if _is_blank_candidate_value(value):
+        return None
+    text_value = str(value)
+    if text_value and raw_text and text_value in raw_text:
+        return text_value
+    if raw_text:
+        return raw_text[:500]
+    return text_value
+
+
+def _source_name_for_field(raw_payload: dict[str, Any], field_name: str) -> str | None:
+    merge_metadata = raw_payload.get("_merge") or {}
+    field_sources = merge_metadata.get("field_sources") or {}
+    source_names = merge_metadata.get("source_names") or {}
+    source_id = field_sources.get(field_name)
+    if source_id is None:
+        return None
+    return source_names.get(source_id, source_id)
+
+
+def _candidate_value_for_field(prepared_row: "PreparedRow", field_name: str) -> Any:
+    value = _field_value_from_row(prepared_row.raw_payload, field_name)
+    if _is_blank_candidate_value(value):
+        return prepared_row.normalized.get(field_name)
+    return value
+
+
+def _build_clean_candidate_from_row(
+    prepared_row: "PreparedRow",
+    critical_fields: list[str],
+    template_columns: list[dict[str, Any]] | None = None,
+) -> AIExtractorOutput:
+    target_fields = _target_fields_for_row(prepared_row, critical_fields, template_columns)
+    schema_adapter = RuleBasedExtractorClient(prepared_row.normalized, target_fields)
+
+    def field_payload(field: str) -> dict[str, Any]:
+        candidate_value = _candidate_value_for_field(prepared_row, field)
+        has_value = not _is_blank_candidate_value(candidate_value)
+        return {
+            "value": schema_adapter._schema_value(candidate_value),
+            "confidence": 1.0 if has_value else 0.0,
+            "source_excerpt": _evidence_excerpt_for_field(
+                field_name=field,
+                value=candidate_value,
+                raw_text=prepared_row.raw_text,
+            ),
+            "evidence_url": _evidence_url_for_field(prepared_row.raw_payload, field) if has_value else None,
+            "evidence_source": _source_name_for_field(prepared_row.raw_payload, field) if has_value else None,
+            "evidence_required": True,
+        }
+
     payload = {
         "critical_fields": {
-            field: {
-                "value": RuleBasedExtractorClient(prepared_row.normalized, critical_fields)._schema_value(prepared_row.normalized.get(field)),
-                "confidence": 1.0 if prepared_row.normalized.get(field) is not None else 0.0,
-                "source_excerpt": None if prepared_row.normalized.get(field) is None else str(prepared_row.normalized.get(field)),
-            }
-            for field in critical_fields
+            field: field_payload(field)
+            for field in target_fields
         },
-        "extraction_notes": ["Pre-judge clean candidate built from normalized source data."],
+        "extraction_notes": [
+            "Pre-judge clean candidate built from evidence-backed source data.",
+            "Focus fields are included even when missing; non-focus fields are included only when source data has a value.",
+        ],
     }
     return AIExtractorOutput.model_validate(payload)
 
@@ -105,22 +221,27 @@ def _is_source_based_crawl(job: CrawlJob | object) -> bool:
     return getattr(job, "crawl_mode", "trusted_sources") != "prompt_discovery"
 
 
-def _extractor_output_for_row(job: CrawlJob | object, prepared_row: "PreparedRow") -> AIExtractorOutput:
+def _extractor_output_for_row(
+    job: CrawlJob | object,
+    prepared_row: "PreparedRow",
+    template_columns: list[dict[str, Any]] | None = None,
+) -> AIExtractorOutput:
+    target_fields = _target_fields_for_row(prepared_row, job.critical_fields, template_columns)
     if _is_source_based_crawl(job):
-        return _build_clean_candidate_from_row(prepared_row, job.critical_fields)
+        return _build_clean_candidate_from_row(prepared_row, job.critical_fields, template_columns)
 
     if job.ai_assist:
         try:
             gemini_client = build_gemini_client()
             return extract_critical_fields(
-                ExtractRequest(raw_text=prepared_row.raw_text, critical_fields=job.critical_fields),
+                ExtractRequest(raw_text=prepared_row.raw_text, critical_fields=target_fields),
                 client=gemini_client,
             )
         except Exception:
             logger.exception("AI extractor failed for row %s. Falling back to rule-based extractor.", prepared_row.unique_key)
     return extract_critical_fields(
-        ExtractRequest(raw_text=prepared_row.raw_text, critical_fields=job.critical_fields),
-        client=RuleBasedExtractorClient(prepared_row.normalized, job.critical_fields),
+        ExtractRequest(raw_text=prepared_row.raw_text, critical_fields=target_fields),
+        client=RuleBasedExtractorClient(prepared_row.normalized, target_fields),
     )
 
 
@@ -135,7 +256,7 @@ def _judge_output_for_row(
         extractor_output=extractor_output,
         rule_validation=rule_validation,
     )
-    if job.ai_assist:
+    if _should_use_ai_judge(job, extractor_output, rule_validation):
         try:
             gemini_client = build_gemini_client()
             return judge_extraction(request, client=gemini_client)
@@ -144,11 +265,48 @@ def _judge_output_for_row(
     return judge_extraction(request, client=RuleBasedJudgeClient(extractor_output, job.critical_fields))
 
 
-def _status_from_progress(*, total_records: int, approved: int, needs_review: int, processed: int) -> str:
+def _field_has_evidence(field_payload: object) -> bool:
+    if not isinstance(field_payload, dict):
+        return False
+    for key in ("source_excerpt", "evidence_url", "evidence_source"):
+        value = field_payload.get(key)
+        if isinstance(value, str) and value.strip():
+            return True
+    return False
+
+
+def _should_use_ai_judge(job: CrawlJob | object, extractor_output: AIExtractorOutput, rule_validation) -> bool:
+    if not getattr(job, "ai_assist", False):
+        return False
+
+    if not _is_source_based_crawl(job):
+        return True
+
+    missing_required = any(getattr(issue, "code", "") == "required_missing" for issue in getattr(rule_validation, "issues", []))
+    if missing_required:
+        return False
+
+    fields = extractor_output.model_dump(mode="json").get("critical_fields", {})
+    if not isinstance(fields, dict):
+        return False
+
+    for field_payload in fields.values():
+        if not isinstance(field_payload, dict):
+            continue
+        if _is_blank_candidate_value(field_payload.get("value")):
+            continue
+        if _field_has_evidence(field_payload):
+            return True
+    return False
+
+
+def _status_from_progress(*, total_records: int, approved: int, needs_review: int, processed: int, rejected: int = 0) -> str:
     if total_records == 0:
         return "QUEUED"
     if needs_review > 0:
         return "NEEDS_REVIEW"
+    if processed >= total_records and rejected > 0:
+        return "FAILED" if approved == 0 else "NEEDS_REVIEW"
     if processed > 0 and approved == processed:
         return "READY_TO_EXPORT"
     return "CRAWLING"
@@ -182,6 +340,9 @@ class RuleBasedExtractorClient:
                     "value": self._schema_value(self.row.get(field)),
                     "confidence": 1.0 if self.row.get(field) is not None else 0.0,
                     "source_excerpt": None if self.row.get(field) is None else str(self._schema_value(self.row.get(field))),
+                    "evidence_url": self.row.get("source_url") if self.row.get(field) is not None and isinstance(self.row.get("source_url"), str) else None,
+                    "evidence_source": None,
+                    "evidence_required": True,
                 }
                 for field in self.critical_fields
             },
@@ -260,6 +421,61 @@ def _source_role(source: object) -> str:
 
 def _is_empty_value(value: Any) -> bool:
     return value in (None, "", [], {})
+
+
+def _canonical_text(value: object) -> str:
+    text = str(value or "").strip().lower()
+    text = re.sub(r"[^a-z0-9]+", " ", text)
+    return " ".join(text.split())
+
+
+def _merge_key_for_row(prepared_row: "PreparedRow") -> str:
+    unique_key = str(prepared_row.unique_key or "").strip()
+    if unique_key and not unique_key.lower().startswith(("http://", "https://", "row-")) and not re.fullmatch(r"Q\d+", unique_key):
+        return f"unique:{unique_key}"
+    name_key = _canonical_text(prepared_row.normalized.get("name"))
+    if name_key:
+        country_key = _canonical_text(prepared_row.normalized.get("country"))
+        return f"name:{country_key}:{name_key}"
+    return f"unique:{unique_key}"
+
+
+def _clean_record_for_job_key(db: Session, *, job_id: str, unique_key: str) -> CleanRecord | object | None:
+    try:
+        return (
+            db.query(CleanRecord)
+            .filter(CleanRecord.job_id == job_id, CleanRecord.unique_key == unique_key)
+            .one_or_none()
+        )
+    except Exception:
+        clean_records = getattr(db, "clean_records", [])
+        if isinstance(clean_records, list):
+            return next(
+                (
+                    record
+                    for record in clean_records
+                    if str(getattr(record, "job_id", "")) == str(job_id)
+                    and str(getattr(record, "unique_key", "")) == str(unique_key)
+                ),
+                None,
+            )
+        return None
+
+
+def _clean_record_covers_fields(clean_record: CleanRecord | object, prepared_row: "PreparedRow", target_fields: list[str]) -> bool:
+    clean_payload = getattr(clean_record, "clean_payload", None)
+    if not isinstance(clean_payload, dict):
+        return False
+    for field_name in target_fields:
+        if field_name not in clean_payload:
+            return False
+        clean_value = clean_payload.get(field_name)
+        raw_value = _field_value_from_row(prepared_row.raw_payload, field_name)
+        if _is_empty_value(raw_value):
+            raw_value = prepared_row.normalized.get(field_name)
+        if _is_empty_value(clean_value) and not _is_empty_value(raw_value):
+            return False
+    return True
 
 
 def _source_label(source: object) -> str:
@@ -707,7 +923,8 @@ def _merge_prepared_sources(sources: list[tuple[object, PreparedSource]]) -> lis
         source_id = str(source.id)
         source_name = source_names.get(source_id, source_id)
         for prepared_row in prepared_source.rows:
-            existing = merged_rows.get(prepared_row.unique_key)
+            merge_key = _merge_key_for_row(prepared_row)
+            existing = merged_rows.get(merge_key)
             if existing is None:
                 field_sources = {
                     field_name: source_id
@@ -721,7 +938,7 @@ def _merge_prepared_sources(sources: list[tuple[object, PreparedSource]]) -> lis
                     conflicts=conflicts,
                     source_names=source_names,
                 )
-                merged_rows[prepared_row.unique_key] = MergedPreparedRow(
+                merged_rows[merge_key] = MergedPreparedRow(
                     source_id=source_id,
                     unique_key=prepared_row.unique_key,
                     normalized=dict(prepared_row.normalized),
@@ -768,9 +985,9 @@ def _merge_prepared_sources(sources: list[tuple[object, PreparedSource]]) -> lis
                 source_names=existing.source_names,
             )
 
-            merged_rows[prepared_row.unique_key] = MergedPreparedRow(
+            merged_rows[merge_key] = MergedPreparedRow(
                 source_id=existing.source_id,
-                unique_key=prepared_row.unique_key,
+                unique_key=existing.unique_key,
                 normalized=merged_normalized,
                 raw_payload=_build_merged_raw_payload(
                     normalized=merged_normalized,
@@ -801,6 +1018,18 @@ def _load_raw_record(db: Session, raw_record_id: str) -> RawRecord | object:
     if raw_record is None:
         raise DirectRunError("Raw record could not be loaded after ingest")
     return raw_record
+
+
+def _template_columns_for_job(db: Session, job: CrawlJob | object) -> list[dict[str, Any]]:
+    template_id = getattr(job, "clean_template_id", None)
+    if template_id is None:
+        return []
+    try:
+        template = db.query(CleanTemplate).filter(CleanTemplate.id == template_id).one_or_none()
+    except Exception:
+        return []
+    columns = getattr(template, "columns", None) if template is not None else None
+    return [dict(column) for column in columns if isinstance(column, dict)] if isinstance(columns, list) else []
 
 
 def _source_stub_from_bundle(bundle: DiscoverySourceBundle) -> object:
@@ -877,27 +1106,43 @@ def _supplemental_source_plan_entries(job: CrawlJob | object) -> list[dict[str, 
     return [source for source in fallback_sources if isinstance(source, dict)] if isinstance(fallback_sources, list) else []
 
 
-def _resolved_plan_sources(db: Session, entries: list[dict[str, Any]], *, country: str) -> list[tuple[object, PreparedSource]]:
+def _resolved_plan_sources(
+    db: Session,
+    entries: list[dict[str, Any]],
+    *,
+    country: str,
+    focus_fields: list[str] | tuple[str, ...] | None = None,
+) -> list[tuple[object, PreparedSource]]:
     resolved_sources: list[tuple[object, PreparedSource]] = []
+    source_errors: list[str] = []
     for entry in entries:
         source = _persisted_source_for_plan_entry(db, entry, country=country)
+        source_name = str(getattr(source, "source_name", None) or entry.get("name") or entry.get("id") or "Catalog source")
+        try:
+            bundle = fetch_discovery_bundle_from_source(source, country=country, focus_fields=focus_fields)
+        except Exception as exc:
+            source_errors.append(f"{source_name}: {exc}")
+            logger.warning("Skipping crawl source %s after fetch failure: %s", source_name, exc)
+            continue
         resolved_sources.append(
             (
                 source,
-                _prepared_source_from_bundle(fetch_discovery_bundle_from_source(source, country=country)),
+                _prepared_source_from_bundle(bundle),
             )
         )
+    if entries and not resolved_sources and source_errors:
+        raise DirectRunError(f"All configured sources failed: {'; '.join(source_errors)}")
     return resolved_sources
 
 
 def _resolved_catalog_sources(db: Session, job: CrawlJob | object) -> list[tuple[object, PreparedSource]]:
     country = str(getattr(job, "country", "") or "")
-    return _resolved_plan_sources(db, _trusted_source_plan_entries(job), country=country)
+    return _resolved_plan_sources(db, _trusted_source_plan_entries(job), country=country, focus_fields=list(getattr(job, "critical_fields", []) or []))
 
 
 def _resolved_supplemental_sources(db: Session, job: CrawlJob | object) -> list[tuple[object, PreparedSource]]:
     country = str(getattr(job, "country", "") or "")
-    return _resolved_plan_sources(db, _supplemental_source_plan_entries(job), country=country)
+    return _resolved_plan_sources(db, _supplemental_source_plan_entries(job), country=country, focus_fields=list(getattr(job, "critical_fields", []) or []))
 
 
 def _prepared_source_from_bundle(bundle: DiscoverySourceBundle) -> PreparedSource:
@@ -975,7 +1220,13 @@ def _resolve_discovery_sources(db: Session, *, job: CrawlJob | object) -> list[t
         resolved_sources.append(
             (
                 source,
-                _prepared_source_from_bundle(fetch_discovery_bundle_from_source(source, country=getattr(job, "country", None))),
+                _prepared_source_from_bundle(
+                    fetch_discovery_bundle_from_source(
+                        source,
+                        country=getattr(job, "country", None),
+                        focus_fields=list(getattr(job, "critical_fields", []) or []),
+                    )
+                ),
             )
         )
     return resolved_sources
@@ -1002,10 +1253,11 @@ def run_crawl_job_direct(db: Session, *, job: CrawlJob | object) -> DirectRunRes
 
     prepared_sources = _resolve_discovery_sources(db, job=job)
     merged_rows = _merge_prepared_sources(prepared_sources)
+    template_columns = _template_columns_for_job(db, job)
     total_records = len(merged_rows)
     crawled = len(merged_rows)
 
-    job.status = "CRAWLING"
+    job.status = "EXTRACTING"
     job.progress = _build_progress(
         total_records=total_records,
         crawled=crawled,
@@ -1021,64 +1273,7 @@ def run_crawl_job_direct(db: Session, *, job: CrawlJob | object) -> DirectRunRes
     db.add(job)
     db.commit()
 
-    for prepared_row in merged_rows:
-        raw_result = upsert_raw_record(
-            db,
-            job_id=job.id,
-            source_id=prepared_row.source_id,
-            unique_key=prepared_row.unique_key,
-            raw_payload=prepared_row.raw_payload,
-            record_hash=None,
-        )
-        if not raw_result.changed:
-            skipped += 1
-            job.progress = _build_progress(
-                total_records=total_records,
-                crawled=crawled,
-                extracted=extracted,
-                needs_review=needs_review,
-                cleaned=cleaned,
-                skipped=skipped,
-                clean_candidates=clean_candidates,
-                approved=approved,
-                rejected=rejected,
-                processed=processed,
-            )
-            db.add(job)
-            db.commit()
-            continue
-
-        raw_record = _load_raw_record(db, raw_result.raw_record_id)
-        extractor_output = _extractor_output_for_row(job, prepared_row)
-        extracted += 1
-        processed += 1
-        extracted_values = {field: value.value for field, value in extractor_output.critical_fields.items()}
-        rule_validation = validate_critical_fields(extracted_values, required_fields=job.critical_fields)
-        judge_output = _judge_output_for_row(job, prepared_row, extractor_output, rule_validation)
-
-        _annotate_judge_output(
-            judge_output=judge_output,
-            merge_metadata=prepared_row.merge_metadata,
-            extracted_values=extracted_values,
-        )
-        scoring = calculate_weighted_confidence(judge_output, required_fields=job.critical_fields)
-        ai_log = _log_ai_extraction_with_merge(
-            db,
-            raw_record_id=raw_result.raw_record_id,
-            extractor_output=extractor_output,
-            judge_output=judge_output,
-            scoring=scoring,
-            merge_metadata=prepared_row.merge_metadata,
-        )
-        clean_result = generate_clean_record(db, raw_record=raw_record, ai_log=ai_log)
-        clean_candidates += 1
-        if clean_result.clean_record.status != "REJECTED":
-            cleaned += 1
-        approved_inc, needs_review_inc, rejected_inc = _count_clean_status(clean_result.clean_record.status)
-        approved += approved_inc
-        needs_review += needs_review_inc
-        rejected += rejected_inc
-
+    def persist_progress() -> None:
         job.progress = _build_progress(
             total_records=total_records,
             crawled=crawled,
@@ -1094,11 +1289,83 @@ def run_crawl_job_direct(db: Session, *, job: CrawlJob | object) -> DirectRunRes
         db.add(job)
         db.commit()
 
+    for index, prepared_row in enumerate(merged_rows, start=1):
+        try:
+            target_fields = _target_fields_for_row(prepared_row, job.critical_fields, template_columns)
+            raw_result = upsert_raw_record(
+                db,
+                job_id=job.id,
+                source_id=prepared_row.source_id,
+                unique_key=prepared_row.unique_key,
+                raw_payload=prepared_row.raw_payload,
+                record_hash=None,
+            )
+            if not raw_result.changed:
+                existing_clean = _clean_record_for_job_key(db, job_id=job.id, unique_key=prepared_row.unique_key)
+                if existing_clean is not None and _clean_record_covers_fields(existing_clean, prepared_row, target_fields):
+                    skipped += 1
+                    processed += 1
+                    clean_candidates += 1
+                    if getattr(existing_clean, "status", None) != "REJECTED":
+                        cleaned += 1
+                    approved_inc, needs_review_inc, rejected_inc = _count_clean_status(str(getattr(existing_clean, "status", "NEEDS_REVIEW")))
+                    approved += approved_inc
+                    needs_review += needs_review_inc
+                    rejected += rejected_inc
+                    persist_progress()
+                    continue
+
+            raw_record = _load_raw_record(db, raw_result.raw_record_id)
+            extractor_output = _extractor_output_for_row(job, prepared_row, template_columns)
+            extracted += 1
+            processed += 1
+            extracted_values = {field: value.value for field, value in extractor_output.critical_fields.items()}
+            rule_validation = validate_critical_fields(extracted_values, required_fields=job.critical_fields)
+            judge_output = _judge_output_for_row(job, prepared_row, extractor_output, rule_validation)
+
+            _annotate_judge_output(
+                judge_output=judge_output,
+                merge_metadata=prepared_row.merge_metadata,
+                extracted_values=extracted_values,
+            )
+            scoring = calculate_weighted_confidence(judge_output, required_fields=job.critical_fields)
+            ai_log = _log_ai_extraction_with_merge(
+                db,
+                raw_record_id=raw_result.raw_record_id,
+                extractor_output=extractor_output,
+                judge_output=judge_output,
+                scoring=scoring,
+                merge_metadata=prepared_row.merge_metadata,
+            )
+            clean_result = generate_clean_record(db, raw_record=raw_record, ai_log=ai_log)
+            clean_candidates += 1
+            if clean_result.clean_record.status != "REJECTED":
+                cleaned += 1
+            approved_inc, needs_review_inc, rejected_inc = _count_clean_status(clean_result.clean_record.status)
+            approved += approved_inc
+            needs_review += needs_review_inc
+            rejected += rejected_inc
+        except Exception:
+            logger.exception(
+                "Skipping row %s/%s for job %s after processing failure. unique_key=%s",
+                index,
+                total_records,
+                getattr(job, "id", "unknown"),
+                prepared_row.unique_key,
+            )
+            db.rollback()
+            skipped += 1
+            rejected += 1
+            processed += 1
+
+        persist_progress()
+
     status = _status_from_progress(
         total_records=total_records,
         approved=approved,
         needs_review=needs_review,
         processed=processed,
+        rejected=rejected,
     )
 
     job.status = status

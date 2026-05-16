@@ -24,12 +24,14 @@ def build_export_rows(
     *,
     template_columns: list[dict[str, object]],
     defaults: dict[str, object] | None = None,
+    allow_rule_based_defaults: bool = True,
 ) -> list[dict[str, object | None]]:
     return [
         map_clean_payload_to_template(
             getattr(record, "clean_payload", {}) or {},
             template_columns=template_columns,
             defaults=defaults,
+            allow_rule_based_defaults=allow_rule_based_defaults,
         )
         for record in clean_records
     ]
@@ -85,11 +87,13 @@ def export_clean_records_to_csv(
     *,
     template_columns: list[dict[str, object]],
     defaults: dict[str, object] | None = None,
+    allow_rule_based_defaults: bool = True,
 ) -> bytes:
     rows = build_export_rows(
         clean_records,
         template_columns=template_columns,
         defaults=defaults,
+        allow_rule_based_defaults=allow_rule_based_defaults,
     )
     return export_rows_to_csv(rows, template_columns=template_columns)
 
@@ -100,10 +104,12 @@ def export_clean_records_to_xlsx(
     *,
     template_columns: list[dict[str, object]],
     defaults: dict[str, object] | None = None,
+    allow_rule_based_defaults: bool = True,
 ) -> bytes:
     rows = build_export_rows(
         clean_records,
         template_columns=template_columns,
         defaults=defaults,
+        allow_rule_based_defaults=allow_rule_based_defaults,
     )
     return export_rows_to_xlsx(rows, template_columns=template_columns)

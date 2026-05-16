@@ -68,7 +68,7 @@ def evaluate_import_readiness(
     checks = [
         ReadinessCheck(
             key="required_critical_fields",
-            label="Required critical fields filled",
+            label="Required focus fields filled",
             passed=missing_required_count == 0,
             blocker_count=missing_required_count,
         ),

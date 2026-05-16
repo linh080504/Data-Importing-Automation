@@ -2,8 +2,9 @@ import Link from "next/link";
 import { DashboardLayout } from "@/components/dashboard-layout";
 import { Card, MetricCard, PageHeader } from "@/components/ui";
 import { deleteTemplate, getJobs, getTemplates, uploadTemplate } from "@/lib/api";
-import { exportReadiness } from "@/lib/mock-data";
 import { redirect } from "next/navigation";
+
+export const dynamic = "force-dynamic";
 
 async function uploadTemplateAction(formData: FormData) {
   "use server";
@@ -59,8 +60,34 @@ export default async function TemplatesPage({ searchParams }: { searchParams: Se
 
   const [templates, jobs] = await Promise.all([getTemplates(), getJobs()]);
   const activeTemplate = templates[0];
-  const templateName = activeTemplate?.templateName ?? exportReadiness.exportPreview.templateName;
-  const activeJobs = jobs.filter((job) => job.templateName === templateName).length;
+  const templateName = activeTemplate?.templateName ?? "No template";
+  const jobsUsingActiveTemplate = activeTemplate ? jobs.filter((job) => job.templateName === activeTemplate.templateName) : [];
+  const activeJobs = jobsUsingActiveTemplate.length;
+  const rowsExportReady = jobsUsingActiveTemplate
+    .filter((job) => job.status === "READY_TO_EXPORT" || job.status === "EXPORTED")
+    .reduce((sum, job) => sum + job.cleanRecords, 0);
+  const templateChecks = [
+    {
+      key: "catalog_loaded",
+      label: "Template catalog loaded",
+      status: templates.length > 0 ? "pass" : "warning",
+    },
+    {
+      key: "active_template",
+      label: "Active template selected",
+      status: activeTemplate ? "pass" : "warning",
+    },
+    {
+      key: "jobs_mapped",
+      label: "Jobs mapped to active template",
+      status: activeJobs > 0 ? "pass" : "warning",
+    },
+    {
+      key: "ready_rows",
+      label: "Ready rows from live jobs",
+      status: rowsExportReady > 0 ? "pass" : "warning",
+    },
+  ];
 
   return (
     <DashboardLayout>
@@ -74,7 +101,7 @@ export default async function TemplatesPage({ searchParams }: { searchParams: Se
         <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
           <MetricCard label="Active template" value={templateName} subtext={activeTemplate?.fileName ?? "Current export schema"} />
           <MetricCard label="Template count" value={String(templates.length)} subtext="Schemas available for new jobs" />
-          <MetricCard label="Rows export-ready" value={String(exportReadiness.exportPreview.totalRecords)} subtext="Current clean records available" />
+          <MetricCard label="Rows export-ready" value={String(rowsExportReady)} subtext="From live jobs using the active template" />
           <MetricCard label="Jobs using template" value={String(activeJobs)} subtext="Crawl jobs mapped to this schema" />
         </div>
 
@@ -121,7 +148,7 @@ export default async function TemplatesPage({ searchParams }: { searchParams: Se
 
           <Card title="Template checklist">
             <div className="space-y-3">
-              {exportReadiness.checklist.map((item) => (
+              {templateChecks.map((item) => (
                 <div key={item.key} className="flex items-center justify-between rounded-xl border border-slate-200 px-4 py-3 text-sm">
                   <span className="text-slate-700">{item.label}</span>
                   <span className="font-semibold text-slate-900">{item.status}</span>

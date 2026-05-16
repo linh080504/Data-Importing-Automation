@@ -123,6 +123,24 @@ def test_map_clean_payload_to_template_sets_known_boolean_fields_false_when_miss
     }
 
 
+def test_map_clean_payload_to_template_can_disable_rule_based_boolean_defaults() -> None:
+    mapped = map_clean_payload_to_template(
+        {"name": "Example University"},
+        template_columns=[
+            {"name": "name", "order": 1},
+            {"name": "slug", "order": 2},
+            {"name": "sponsored", "order": 3},
+        ],
+        allow_rule_based_defaults=False,
+    )
+
+    assert mapped == {
+        "name": "Example University",
+        "slug": "example-university",
+        "sponsored": None,
+    }
+
+
 def test_map_clean_payload_to_template_keeps_default_before_rule_fill() -> None:
     clean_payload = {
         "name": "Example University",

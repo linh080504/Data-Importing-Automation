@@ -61,6 +61,16 @@ export type DeleteTemplateResult = {
   error: string | null;
 };
 
+export type DeleteCrawlJobResult = {
+  jobId: string | null;
+  message: string | null;
+  deletedRawRecords: number;
+  deletedAiLogs: number;
+  deletedCleanRecords: number;
+  deletedReviewActions: number;
+  error: string | null;
+};
+
 export type FieldSuggestion = {
   name: string;
   score: number;
@@ -69,6 +79,7 @@ export type FieldSuggestion = {
 
 export type FieldSuggestionResponse = {
   templateId: string;
+  templateColumns: string[];
   suggestedCriticalFields: string[];
   suggestedFieldsDetail: FieldSuggestion[];
   minFields: number;
@@ -151,6 +162,7 @@ export type JobDetailHeader = {
   sourceName: string;
   sourceNames: string[];
   templateName: string;
+  templateColumns: string[];
   crawlMode?: CrawlMode;
   discoveryInput?: CrawlDiscoveryInput | null;
   status: JobStatus;
@@ -221,6 +233,7 @@ export type OverviewResponse = {
     primaryTarget: "review" | "clean" | "export";
   };
   fieldIssues: FieldIssueGroup[];
+  crawledRecords: CrawledRecordsPage;
 };
 
 export type FieldIssueRecord = {
@@ -242,12 +255,58 @@ export type MergeConflict = {
   value: string | number | boolean | null;
 };
 
+export type CrawledRecordField = {
+  fieldName: string;
+  rawValue: string | number | boolean | null;
+  cleanValue: string | number | boolean | null;
+  sourceName?: string | null;
+  fromSecondary: boolean;
+  conflicts: MergeConflict[];
+};
+
+export type CrawledRecordListItem = {
+  rawRecordId: string;
+  displayName: string;
+  uniqueKey: string;
+  country?: string | null;
+  sourceUrl?: string | null;
+  sourceName?: string | null;
+  status: string | null;
+  qualityScore: number | null;
+};
+
+export type CrawledRecordDetail = CrawledRecordListItem & {
+  fields: CrawledRecordField[];
+};
+
+export type CrawledRecordsPage = {
+  total: number;
+  page: number;
+  pageSize: number;
+  items: CrawledRecordListItem[];
+  selectedRecordId: string | null;
+  selectedDetail: CrawledRecordDetail | null;
+};
+
+export type CrawledFieldSnapshot = {
+  fieldName: string;
+  value: string | number | boolean | null;
+  sourceUrl?: string | null;
+  sourceName?: string | null;
+  sourceExcerpt?: string | null;
+  status: "captured" | "missing" | "needs_review" | string;
+  reason?: string | null;
+};
+
 export type ReviewQueueDetail = {
   recordId: string;
   displayName: string;
   uniqueKey: string;
+  sourceUrl?: string | null;
+  sourceName?: string | null;
   confidence: number | null;
   status: string;
+  crawledFields: CrawledFieldSnapshot[];
   fields: {
     fieldName: string;
     rawValue: string | number | boolean | null;
@@ -256,6 +315,10 @@ export type ReviewQueueDetail = {
     reason: string;
     confidence: number | null;
     issueType: "missing" | "format" | "confidence" | "duplicate";
+    sourceExcerpt?: string | null;
+    evidenceUrl?: string | null;
+    evidenceSource?: string | null;
+    evidenceRequired?: boolean;
     mergeSourceId: string | null;
     mergeSourceName: string | null;
     mergeFromSecondary: boolean;
@@ -267,12 +330,17 @@ export type ReviewQueueListItem = {
   recordId: string;
   displayName: string;
   uniqueKey: string;
+  sourceUrl?: string | null;
+  sourceName?: string | null;
   confidence: number | null;
   flaggedFieldCount: number;
+  crawledFields: CrawledFieldSnapshot[];
 };
 
 export type ReviewQueueData = {
   total: number;
+  page: number;
+  limit: number;
   selectedRecordId: string | null;
   items: ReviewQueueListItem[];
   selectedDetail: ReviewQueueDetail;

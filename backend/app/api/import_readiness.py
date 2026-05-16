@@ -10,6 +10,7 @@ from app.schemas.import_readiness import (
     ImportReadinessCheck,
     ImportReadinessResponse,
 )
+from app.services.export_mapping import map_clean_payload_to_template
 from app.services.import_readiness import evaluate_import_readiness
 
 router = APIRouter(tags=["import-readiness"])
@@ -38,7 +39,11 @@ def get_import_readiness(job_id: str, db: Session = Depends(get_db)) -> ImportRe
         seen_keys.add(unique_key)
 
         result = evaluate_import_readiness(
-            clean_payload=clean_record.clean_payload or {},
+            clean_payload=map_clean_payload_to_template(
+                clean_record.clean_payload or {},
+                template_columns=template.columns,
+                allow_rule_based_defaults=False,
+            ),
             required_fields=job.critical_fields,
             template_columns=template.columns,
             is_duplicate=is_duplicate,

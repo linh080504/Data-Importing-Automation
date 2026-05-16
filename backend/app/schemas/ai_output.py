@@ -7,6 +7,9 @@ class ExtractedFieldValue(BaseModel):
     value: str | int | float | bool | None
     confidence: float = Field(ge=0.0, le=1.0)
     source_excerpt: str | None = None
+    evidence_url: str | None = None
+    evidence_source: str | None = None
+    evidence_required: bool = False
 
 
 class AIExtractorOutput(BaseModel):

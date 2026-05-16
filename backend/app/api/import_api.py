@@ -7,6 +7,7 @@ from app.models.clean_template import CleanTemplate
 from app.models.crawl_job import CrawlJob
 from app.models.import_log import ImportLog
 from app.schemas.import_api import ImportResponse
+from app.services.export_mapping import map_clean_payload_to_template
 from app.services.import_readiness import evaluate_import_readiness
 from app.services.importer import upsert_import_records
 
@@ -36,7 +37,11 @@ def import_crawl_job(job_id: str, db: Session = Depends(get_db)) -> ImportRespon
         seen_keys.add(unique_key)
 
         result = evaluate_import_readiness(
-            clean_payload=clean_record.clean_payload or {},
+            clean_payload=map_clean_payload_to_template(
+                clean_record.clean_payload or {},
+                template_columns=template.columns,
+                allow_rule_based_defaults=False,
+            ),
             required_fields=job.critical_fields,
             template_columns=template.columns,
             is_duplicate=is_duplicate,
@@ -54,7 +59,14 @@ def import_crawl_job(job_id: str, db: Session = Depends(get_db)) -> ImportRespon
         raise HTTPException(status_code=400, detail="Import readiness blockers must be resolved before importing")
 
     existing_records = [
-        {"unique_key": clean_record.unique_key, **(clean_record.clean_payload or {})}
+        {
+            "unique_key": clean_record.unique_key,
+            **map_clean_payload_to_template(
+                clean_record.clean_payload or {},
+                template_columns=template.columns,
+                allow_rule_based_defaults=False,
+            ),
+        }
         for clean_record in clean_records
     ]
     result = upsert_import_records(

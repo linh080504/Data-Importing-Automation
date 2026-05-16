@@ -29,13 +29,18 @@ def _slugify(value: object) -> str | None:
     return text or None
 
 
-def _rule_based_fill(column_name: str, mapped: dict[str, object | None]) -> object | None:
+def _rule_based_fill(
+    column_name: str,
+    mapped: dict[str, object | None],
+    *,
+    allow_rule_based_defaults: bool,
+) -> object | None:
     lower = column_name.lower()
 
     if lower == "slug":
         return _slugify(mapped.get("name"))
 
-    if lower in {"sponsored", "student_loan_available", "housing_availability", "immigration_support"}:
+    if allow_rule_based_defaults and lower in {"sponsored", "student_loan_available", "housing_availability", "immigration_support"}:
         return False
 
     return None
@@ -46,6 +51,7 @@ def map_clean_payload_to_template(
     *,
     template_columns: list[dict[str, object]],
     defaults: dict[str, object] | None = None,
+    allow_rule_based_defaults: bool = True,
 ) -> dict[str, object | None]:
     ordered_columns = sorted(template_columns, key=_column_order)
     default_values = defaults or {}
@@ -60,7 +66,11 @@ def map_clean_payload_to_template(
         if _is_empty(value) and column_name in default_values:
             value = default_values[column_name]
         if _is_empty(value):
-            value = _rule_based_fill(column_name, mapped)
+            value = _rule_based_fill(
+                column_name,
+                mapped,
+                allow_rule_based_defaults=allow_rule_based_defaults,
+            )
 
         mapped[column_name] = value
 
