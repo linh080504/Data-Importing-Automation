@@ -1,10 +1,22 @@
+import json
 from types import SimpleNamespace
 
 import httpx
 import pytest
 
 from app.schemas.ai_output import AIExtractorOutput, AIJudgeOutput
-from app.services.direct_run import DirectRunError, _merge_prepared_sources, _resolved_plan_sources, fetch_source_rows, prepare_source_rows, run_crawl_job_direct
+from app.services.direct_run import (
+    DirectRunError,
+    _apply_ai_enrichment,
+    _limit_rows_for_quality_target,
+    _merge_prepared_sources,
+    _resolved_plan_sources,
+    _should_reprocess_record,
+    _should_skip_unchanged_record,
+    fetch_source_rows,
+    prepare_source_rows,
+    run_crawl_job_direct,
+)
 from app.services.gemini_client import GeminiRateLimitError
 
 
@@ -93,6 +105,29 @@ def job():
             "cleaned": 0,
         },
     )
+
+
+def test_should_reprocess_record_respects_resume_failed_only_flag() -> None:
+    settings_resume_only = SimpleNamespace(crawl_resume_failed_only=True)
+    settings_full_reprocess = SimpleNamespace(crawl_resume_failed_only=False)
+
+    assert _should_reprocess_record(settings_resume_only, SimpleNamespace(status="REJECTED")) is True
+    assert _should_reprocess_record(settings_resume_only, SimpleNamespace(status="NEEDS_REVIEW")) is True
+    assert _should_reprocess_record(settings_resume_only, SimpleNamespace(status="APPROVED")) is False
+    assert _should_reprocess_record(settings_resume_only, None) is True
+    assert _should_reprocess_record(settings_full_reprocess, SimpleNamespace(status="APPROVED")) is True
+
+
+def test_should_skip_unchanged_record_skips_approved_when_resume_failed_only() -> None:
+    settings = SimpleNamespace(crawl_resume_failed_only=True)
+    prepared_row = SimpleNamespace(normalized={"name": "Example"}, raw_payload={"name": "Example"})
+
+    assert _should_skip_unchanged_record(
+        settings,
+        existing_clean=SimpleNamespace(status="APPROVED", clean_payload={"name": "Example"}),
+        prepared_row=prepared_row,
+        target_fields=["name"],
+    ) is True
 
 
 def test_fetch_source_rows_supports_items_path(monkeypatch) -> None:
@@ -417,6 +452,51 @@ def test_merge_prepared_sources_matches_diacritic_name_variants() -> None:
     assert merged[0].raw_payload["_merge"]["field_sources"]["website"] == "src_wikipedia"
 
 
+def test_merge_prepared_sources_keeps_generic_school_names_separate_by_article() -> None:
+    merged = _merge_prepared_sources(
+        [
+            (
+                SimpleNamespace(id="src_wikipedia"),
+                SimpleNamespace(
+                    source_type="discovery_bundle",
+                    rows=[
+                        SimpleNamespace(
+                            normalized={
+                                "name": "University of Science",
+                                "country": "Vietnam",
+                                "source_url": "https://en.wikipedia.org/wiki/University_of_Science,_VNU-HCM",
+                            },
+                            raw_payload={
+                                "name": "University of Science",
+                                "country": "Vietnam",
+                                "source_url": "https://en.wikipedia.org/wiki/University_of_Science,_VNU-HCM",
+                            },
+                            raw_text="HCM science row",
+                            unique_key="https://en.wikipedia.org/wiki/University_of_Science,_VNU-HCM",
+                        ),
+                        SimpleNamespace(
+                            normalized={
+                                "name": "University of Science",
+                                "country": "Vietnam",
+                                "source_url": "https://en.wikipedia.org/wiki/University_of_Science,_Hue_University",
+                            },
+                            raw_payload={
+                                "name": "University of Science",
+                                "country": "Vietnam",
+                                "source_url": "https://en.wikipedia.org/wiki/University_of_Science,_Hue_University",
+                            },
+                            raw_text="Hue science row",
+                            unique_key="https://en.wikipedia.org/wiki/University_of_Science,_Hue_University",
+                        ),
+                    ],
+                ),
+            ),
+        ]
+    )
+
+    assert len(merged) == 2
+
+
 def test_prompt_discovery_rate_limit_falls_back_to_trusted_sources(monkeypatch, job) -> None:
     session = FakeSession()
     job.source_ids = []
@@ -500,7 +580,7 @@ def test_prompt_discovery_rate_limit_falls_back_to_trusted_sources(monkeypatch, 
     )
     monkeypatch.setattr(
         "app.services.direct_run.generate_clean_record",
-        lambda db, *, raw_record, ai_log: SimpleNamespace(
+        lambda db, *, raw_record, ai_log, **kwargs: SimpleNamespace(
             clean_record=SimpleNamespace(status="APPROVED"),
             created=True,
         ),
@@ -672,7 +752,7 @@ def test_supplemental_discovery_resolves_supplemental_plan(monkeypatch, job) -> 
     )
     monkeypatch.setattr(
         "app.services.direct_run.generate_clean_record",
-        lambda db, *, raw_record, ai_log: SimpleNamespace(
+        lambda db, *, raw_record, ai_log, **kwargs: SimpleNamespace(
             clean_record=SimpleNamespace(status="NEEDS_REVIEW"),
             created=True,
         ),
@@ -775,7 +855,7 @@ def test_run_crawl_job_direct_processes_rows(monkeypatch, job) -> None:
     )
     monkeypatch.setattr(
         "app.services.direct_run.generate_clean_record",
-        lambda db, *, raw_record, ai_log: SimpleNamespace(
+        lambda db, *, raw_record, ai_log, **kwargs: SimpleNamespace(
             clean_record=SimpleNamespace(status="APPROVED"),
             created=True,
         ),
@@ -859,7 +939,7 @@ def test_run_crawl_job_direct_skips_failed_row_and_continues(monkeypatch, job) -
     )
     monkeypatch.setattr(
         "app.services.direct_run.generate_clean_record",
-        lambda db, *, raw_record, ai_log: SimpleNamespace(
+        lambda db, *, raw_record, ai_log, **kwargs: SimpleNamespace(
             clean_record=SimpleNamespace(status="APPROVED"),
             created=True,
         ),
@@ -918,7 +998,7 @@ def test_run_crawl_job_direct_reprocesses_unchanged_raw_without_clean_record(mon
     )
     monkeypatch.setattr(
         "app.services.direct_run.generate_clean_record",
-        lambda db, *, raw_record, ai_log: SimpleNamespace(
+        lambda db, *, raw_record, ai_log, **kwargs: SimpleNamespace(
             clean_record=SimpleNamespace(status="APPROVED"),
             created=True,
         ),
@@ -994,7 +1074,7 @@ def test_run_crawl_job_direct_reprocesses_unchanged_raw_when_clean_payload_is_bl
     )
     monkeypatch.setattr(
         "app.services.direct_run.generate_clean_record",
-        lambda db, *, raw_record, ai_log: SimpleNamespace(
+        lambda db, *, raw_record, ai_log, **kwargs: SimpleNamespace(
             clean_record=SimpleNamespace(status="APPROVED"),
             created=False,
         ),
@@ -1074,7 +1154,7 @@ def test_run_crawl_job_direct_marks_review_needed(monkeypatch, job) -> None:
     )
     monkeypatch.setattr(
         "app.services.direct_run.generate_clean_record",
-        lambda db, *, raw_record, ai_log: SimpleNamespace(
+        lambda db, *, raw_record, ai_log, **kwargs: SimpleNamespace(
             clean_record=SimpleNamespace(status="NEEDS_REVIEW"),
             created=True,
         ),
@@ -1138,7 +1218,7 @@ def test_source_based_run_does_not_call_ai_judge_when_focus_fields_are_missing(m
     )
     monkeypatch.setattr(
         "app.services.direct_run.generate_clean_record",
-        lambda db, *, raw_record, ai_log: SimpleNamespace(
+        lambda db, *, raw_record, ai_log, **kwargs: SimpleNamespace(
             clean_record=SimpleNamespace(status="NEEDS_REVIEW"),
             created=True,
         ),
@@ -1149,3 +1229,201 @@ def test_source_based_run_does_not_call_ai_judge_when_focus_fields_are_missing(m
     assert result.total_records == 1
     assert result.processed == 1
     assert result.needs_review == 1
+
+
+def test_rule_based_judge_allows_missing_optional_focus_fields_as_null() -> None:
+    from app.services.direct_run import RuleBasedJudgeClient
+
+    output = AIExtractorOutput.model_validate(
+        {
+            "critical_fields": {
+                "name": {
+                    "value": "Example University",
+                    "confidence": 0.86,
+                    "source_excerpt": "Example University",
+                    "evidence_url": "https://example.edu/profile",
+                    "evidence_required": True,
+                },
+                "financials": {
+                    "value": None,
+                    "confidence": 0.0,
+                    "source_excerpt": None,
+                    "evidence_required": True,
+                },
+            },
+            "extraction_notes": [],
+        }
+    )
+
+    payload = json.loads(RuleBasedJudgeClient(output, ["name"]).generate_json(prompt=""))
+
+    assert payload["status"] == "APPROVED"
+    assert payload["fields_validation"]["name"]["confidence"] < 90
+    assert payload["fields_validation"]["financials"]["is_correct"] is True
+    assert "stay null" in payload["fields_validation"]["financials"]["reason"]
+    assert payload["overall_confidence"] >= 80
+
+
+def test_rule_based_judge_blocks_missing_required_fields() -> None:
+    from app.services.direct_run import RuleBasedJudgeClient
+
+    output = AIExtractorOutput.model_validate(
+        {
+            "critical_fields": {
+                "name": {
+                    "value": None,
+                    "confidence": 0.0,
+                    "source_excerpt": None,
+                    "evidence_required": True,
+                },
+            },
+            "extraction_notes": [],
+        }
+    )
+
+    payload = json.loads(RuleBasedJudgeClient(output, ["name"]).generate_json(prompt=""))
+
+    assert payload["status"] == "NEEDS_REVIEW"
+    assert payload["fields_validation"]["name"]["is_correct"] is False
+
+
+def test_rule_based_judge_rejects_generic_financials_without_amount() -> None:
+    from app.services.direct_run import RuleBasedJudgeClient
+
+    output = AIExtractorOutput.model_validate(
+        {
+            "critical_fields": {
+                "financials": {
+                    "value": "Tuition fees vary by program and are published annually.",
+                    "confidence": 0.86,
+                    "source_excerpt": "Tuition fees vary by program and are published annually.",
+                    "evidence_url": "https://example.edu/tuition",
+                    "evidence_required": True,
+                },
+            },
+            "extraction_notes": [],
+        }
+    )
+
+    payload = json.loads(RuleBasedJudgeClient(output, []).generate_json(prompt=""))
+
+    assert payload["fields_validation"]["financials"]["is_correct"] is False
+    assert payload["fields_validation"]["financials"]["confidence"] < 65
+
+
+def test_rule_based_judge_scores_source_backed_tuition_amount_high_enough_for_review() -> None:
+    from app.services.direct_run import RuleBasedJudgeClient
+
+    output = AIExtractorOutput.model_validate(
+        {
+            "critical_fields": {
+                "financials": {
+                    "value": "Tuition fees range from 22,000,000 to 28,000,000 VND per year.",
+                    "confidence": 0.86,
+                    "source_excerpt": "Tuition fees range from 22,000,000 to 28,000,000 VND per year.",
+                    "evidence_url": "https://example.edu/tuition",
+                    "evidence_required": True,
+                },
+            },
+            "extraction_notes": [],
+        }
+    )
+
+    payload = json.loads(RuleBasedJudgeClient(output, []).generate_json(prompt=""))
+
+    assert payload["fields_validation"]["financials"]["is_correct"] is True
+    assert payload["fields_validation"]["financials"]["confidence"] >= 80
+
+
+def test_ai_enrichment_accepts_only_high_confidence_valid_missing_values() -> None:
+    base = AIExtractorOutput.model_validate(
+        {
+            "critical_fields": {
+                "website": {"value": None, "confidence": 0.0, "source_excerpt": None},
+                "admissions_phone": {"value": None, "confidence": 0.0, "source_excerpt": None},
+            },
+            "extraction_notes": [],
+        }
+    )
+    enrichment = AIExtractorOutput.model_validate(
+        {
+            "critical_fields": {
+                "website": {
+                    "value": "https://example.edu",
+                    "confidence": 0.86,
+                    "source_excerpt": "model memory: official domain known",
+                    "evidence_source": "ai_enrichment_model_memory",
+                    "evidence_required": False,
+                },
+                "admissions_phone": {
+                    "value": "123456",
+                    "confidence": 0.99,
+                    "source_excerpt": "model memory",
+                    "evidence_source": "ai_enrichment_model_memory",
+                    "evidence_required": False,
+                },
+            },
+            "extraction_notes": [],
+        }
+    )
+
+    result = _apply_ai_enrichment(base, enrichment, missing_fields=["website", "admissions_phone"])
+
+    assert result.critical_fields["website"].value == "https://example.edu"
+    assert result.critical_fields["website"].evidence_source == "ai_enrichment_model_memory"
+    assert result.critical_fields["admissions_phone"].value is None
+
+
+def test_rule_based_judge_uses_ai_enrichment_confidence_for_accepted_values() -> None:
+    from app.services.direct_run import RuleBasedJudgeClient
+
+    output = AIExtractorOutput.model_validate(
+        {
+            "critical_fields": {
+                "description": {
+                    "value": "Example University is a public university in Vietnam.",
+                    "confidence": 0.86,
+                    "source_excerpt": "model memory: stable public profile",
+                    "evidence_source": "ai_enrichment_model_memory",
+                    "evidence_required": False,
+                },
+            },
+            "extraction_notes": [],
+        }
+    )
+
+    payload = json.loads(RuleBasedJudgeClient(output, []).generate_json(prompt=""))
+
+    assert payload["fields_validation"]["description"]["is_correct"] is True
+    assert payload["fields_validation"]["description"]["confidence"] == 86
+    assert payload["status"] == "APPROVED"
+
+
+def test_quality_target_keeps_highest_scoring_rows() -> None:
+    low_quality = SimpleNamespace(
+        normalized={"name": "Low Quality University"},
+        raw_payload={"name": "Low Quality University"},
+        merge_metadata={},
+    )
+    high_quality = SimpleNamespace(
+        normalized={
+            "name": "High Quality University",
+            "website": "https://high.example.edu",
+            "description": "A public university with a verified profile.",
+            "financials": "Tuition fees are 20,000,000 VND per year.",
+        },
+        raw_payload={
+            "name": "High Quality University",
+            "website": "https://high.example.edu",
+            "source_url": "https://en.wikipedia.org/wiki/High_Quality_University",
+        },
+        merge_metadata={},
+    )
+    job = SimpleNamespace(
+        critical_fields=["name", "website", "financials"],
+        discovery_input={"target_record_count": 1, "quality_mode": "high_confidence"},
+    )
+
+    selected = _limit_rows_for_quality_target([low_quality, high_quality], job=job, template_columns=[])
+
+    assert selected == [high_quality]

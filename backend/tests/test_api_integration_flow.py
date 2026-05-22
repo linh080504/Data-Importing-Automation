@@ -268,6 +268,7 @@ def test_full_api_flow_from_job_creation_through_export(monkeypatch) -> None:
     monkeypatch.setattr("app.api.review_actions.ReviewAction", FakeReviewActionModel)
 
     monkeypatch.setattr("app.api.compare.CrawlJob", FakeCrawlJobModel)
+    monkeypatch.setattr("app.api.compare.CleanTemplate", FakeCleanTemplateModel)
     monkeypatch.setattr("app.api.compare.RawRecord", FakeRawRecordModel)
     monkeypatch.setattr("app.api.compare.CleanRecord", FakeCleanRecordModel)
 

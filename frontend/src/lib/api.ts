@@ -1264,8 +1264,12 @@ export async function triggerExport(jobId: string, format: "csv" | "xlsx", inclu
       total_exported: number;
     };
 
+    const parsedUrl = data.download_url.startsWith("/api/v1/") 
+      ? data.download_url.replace("/api/v1", apiBaseUrl)
+      : data.download_url;
+
     return {
-      downloadUrl: data.download_url,
+      downloadUrl: parsedUrl,
       schemaUsed: data.schema_used,
       totalExported: data.total_exported,
       format,
@@ -1565,12 +1569,18 @@ export async function submitReviewAction(input: ReviewActionInput): Promise<Revi
       status: string;
       message: string;
       review_action_id: string | null;
+      field_name?: string | null;
+      final_value?: string | number | boolean | null;
+      record_status?: string | null;
     };
 
     return {
       status: data.status,
       message: data.message,
       reviewActionId: data.review_action_id,
+      fieldName: data.field_name ?? null,
+      finalValue: data.final_value ?? null,
+      recordStatus: data.record_status ?? null,
     };
   } catch {
     return null;

@@ -29,6 +29,7 @@ Services exposed by compose:
 - Build: `npm run build`
 - Start production build: `npm run start`
 - Lint: `npm run lint`
+- Run tests: `npm test`
 
 ### Backend (`backend/`)
 - Create venv: `python -m venv .venv`
@@ -38,6 +39,7 @@ Services exposed by compose:
 - Run tests: `pytest`
 - Run a single test file: `pytest tests/test_export_api.py`
 - Run a single test: `pytest tests/test_export_api.py -k <test_name>`
+- Run with coverage: `pytest --cov=app --cov-report=term-missing`
 - Apply migrations: `alembic upgrade head`
 
 ### Backend environment
@@ -111,6 +113,14 @@ The n8n workflow is expected to:
 - send approved or review-needed payloads back to FastAPI through the internal webhook
 
 The backend webhook logic currently expects JSON requests and a secret header whose name defaults to `X-N8N-Secret`.
+
+### Cross-service contract hotspots
+When behavior looks wrong in the UI but API calls succeed, verify this chain end-to-end before changing one layer in isolation:
+- backend response schemas/services that define status/readiness semantics
+- `frontend/src/lib/api.ts` mapping logic that translates backend payloads into UI view models
+- n8n payload shape and webhook fields used for change detection/review routing
+
+Many apparent “frontend bugs” are contract mismatches between these three layers.
 
 ## Project-specific instructions
 

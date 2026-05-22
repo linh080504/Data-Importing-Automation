@@ -360,6 +360,9 @@ export type ReviewActionResult = {
   status: string;
   message: string;
   reviewActionId: string | null;
+  fieldName: string | null;
+  finalValue: string | number | boolean | null;
+  recordStatus: string | null;
 };
 
 export type CleanDataResponse = {

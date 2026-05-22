@@ -1,6 +1,13 @@
 from __future__ import annotations
 
 import re
+from html import unescape
+
+from app.services.country_location import coerce_location_code
+from app.services.validator import is_plausible_phone_number, looks_like_tuition_financials
+
+
+SAFE_FALSE_DEFAULT_FIELDS = {"sponsored"}
 
 
 def _column_name(column: dict[str, object]) -> str:
@@ -29,6 +36,35 @@ def _slugify(value: object) -> str | None:
     return text or None
 
 
+def _clean_html_text(value: object) -> str:
+    text = re.sub(r"<sup[^>]*>.*?</sup>", " ", str(value or ""), flags=re.IGNORECASE | re.DOTALL)
+    text = re.sub(r"<style[^>]*>.*?</style>", " ", text, flags=re.IGNORECASE | re.DOTALL)
+    text = re.sub(r"<script[^>]*>.*?</script>", " ", text, flags=re.IGNORECASE | re.DOTALL)
+    text = unescape(re.sub(r"<[^>]+>", " ", text))
+    return " ".join(text.split())
+
+
+def _clean_location(value: object) -> int | None:
+    return coerce_location_code(value)
+
+
+def _clean_template_value(column_name: str, value: object | None) -> object | None:
+    if _is_empty(value):
+        return None
+    lower = column_name.lower()
+    if lower == "location":
+        return _clean_location(value)
+    if lower == "financials" and not looks_like_tuition_financials(value):
+        return None
+    if "phone" in lower and not is_plausible_phone_number(value):
+        return None
+    if isinstance(value, str):
+        if "<" in value and ">" in value:
+            return _clean_html_text(value) or None
+        return value
+    return value
+
+
 def _rule_based_fill(
     column_name: str,
     mapped: dict[str, object | None],
@@ -40,7 +76,7 @@ def _rule_based_fill(
     if lower == "slug":
         return _slugify(mapped.get("name"))
 
-    if allow_rule_based_defaults and lower in {"sponsored", "student_loan_available", "housing_availability", "immigration_support"}:
+    if allow_rule_based_defaults and lower in SAFE_FALSE_DEFAULT_FIELDS:
         return False
 
     return None
@@ -63,8 +99,10 @@ def map_clean_payload_to_template(
             continue
 
         value = clean_payload.get(column_name)
+        used_default = False
         if _is_empty(value) and column_name in default_values:
             value = default_values[column_name]
+            used_default = True
         if _is_empty(value):
             value = _rule_based_fill(
                 column_name,
@@ -72,6 +110,10 @@ def map_clean_payload_to_template(
                 allow_rule_based_defaults=allow_rule_based_defaults,
             )
 
-        mapped[column_name] = value
+        clean_value = _clean_template_value(column_name, value)
+        if _is_empty(clean_value) and not used_default and column_name in default_values:
+            clean_value = _clean_template_value(column_name, default_values[column_name])
+
+        mapped[column_name] = clean_value
 
     return mapped

@@ -208,11 +208,79 @@ def test_build_clean_payload_passes_through_source_backed_raw_fields() -> None:
 
     assert payload["name"] == "Example University"
     assert payload["country"] == "Vietnam"
-    assert payload["source_url"] == "https://en.wikipedia.org/wiki/Example_University"
-    assert payload["reference_url"] == "https://en.wikipedia.org/wiki/List_of_universities_in_Vietnam"
-    assert payload["source_href"] == "https://en.wikipedia.org/wiki/Example_University"
+    assert "source_url" not in payload
+    assert "reference_url" not in payload
+    assert "source_href" not in payload
     assert "sources" not in payload
     assert "_merge" not in payload
+
+
+def test_build_clean_payload_filters_internal_fields_and_rejects_address_location() -> None:
+    payload = build_clean_payload(
+        SimpleNamespace(
+            ai_1_payload={"critical_fields": {"name": {"value": "Example University", "source_excerpt": "Example University"}}},
+            ai_2_validation={"judge_output": {"fields_validation": {"name": {"is_correct": True, "corrected_value": None}}}},
+        ),
+        raw_payload={
+            "name": "Example University",
+            "location": "<span>Hanoi, Vietnam</span>",
+            "snippet": "Internal search evidence",
+            "financials_source_url": "https://example.edu/tuition",
+        },
+        template_columns=[
+            {"name": "name", "order": 1},
+            {"name": "location", "order": 2},
+        ],
+    )
+
+    assert payload == {
+        "name": "Example University",
+    }
+
+
+def test_build_clean_payload_keeps_numeric_location_code() -> None:
+    payload = build_clean_payload(
+        SimpleNamespace(ai_1_payload={"critical_fields": {}}, ai_2_validation={}),
+        raw_payload={"location": "356"},
+        template_columns=[{"name": "location", "order": 1}],
+    )
+
+    assert payload == {"location": 356}
+
+
+def test_build_clean_payload_filters_pass_through_bad_financials_and_phone() -> None:
+    payload = build_clean_payload(
+        SimpleNamespace(ai_1_payload={"critical_fields": {}}, ai_2_validation={}),
+        raw_payload={
+            "financials": "Tuition fees vary by program and are published annually.",
+            "admissions_phone": "123456",
+        },
+        template_columns=[
+            {"name": "financials", "order": 1},
+            {"name": "admissions_phone", "order": 2},
+        ],
+    )
+
+    assert payload == {}
+
+
+def test_build_clean_payload_keeps_pass_through_tuition_amount_and_real_phone() -> None:
+    payload = build_clean_payload(
+        SimpleNamespace(ai_1_payload={"critical_fields": {}}, ai_2_validation={}),
+        raw_payload={
+            "financials": "Tuition fees range from 22,000,000 to 28,000,000 VND per year.",
+            "admissions_phone": "+84 24 3869 4242",
+        },
+        template_columns=[
+            {"name": "financials", "order": 1},
+            {"name": "admissions_phone", "order": 2},
+        ],
+    )
+
+    assert payload == {
+        "financials": "Tuition fees range from 22,000,000 to 28,000,000 VND per year.",
+        "admissions_phone": "+84 24 3869 4242",
+    }
 
 
 

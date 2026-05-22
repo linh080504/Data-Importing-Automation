@@ -11,6 +11,7 @@ from app.services.export_mapping import map_clean_payload_to_template
 from app.services.import_readiness import evaluate_import_readiness
 from app.services.importer import upsert_import_records
 from app.services.required_fields import required_fields_for_job
+from app.services.template_defaults import defaults_for_job
 
 router = APIRouter(tags=["import"])
 
@@ -27,6 +28,7 @@ def import_crawl_job(job_id: str, db: Session = Depends(get_db)) -> ImportRespon
 
     clean_records = db.query(CleanRecord).filter(CleanRecord.job_id == job_id).all()
     required_fields = required_fields_for_job(job, template.columns)
+    defaults = defaults_for_job(job)
 
     missing_required = 0
     duplicate_count = 0
@@ -42,7 +44,8 @@ def import_crawl_job(job_id: str, db: Session = Depends(get_db)) -> ImportRespon
             clean_payload=map_clean_payload_to_template(
                 clean_record.clean_payload or {},
                 template_columns=template.columns,
-                allow_rule_based_defaults=False,
+                defaults=defaults,
+                allow_rule_based_defaults=True,
             ),
             required_fields=required_fields,
             template_columns=template.columns,
@@ -66,7 +69,8 @@ def import_crawl_job(job_id: str, db: Session = Depends(get_db)) -> ImportRespon
             **map_clean_payload_to_template(
                 clean_record.clean_payload or {},
                 template_columns=template.columns,
-                allow_rule_based_defaults=False,
+                defaults=defaults,
+                allow_rule_based_defaults=True,
             ),
         }
         for clean_record in clean_records

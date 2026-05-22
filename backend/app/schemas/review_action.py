@@ -15,3 +15,6 @@ class ReviewActionResponse(BaseModel):
     status: str
     message: str
     review_action_id: str | None = None
+    field_name: str | None = None
+    final_value: str | int | float | bool | None = None
+    record_status: str | None = None

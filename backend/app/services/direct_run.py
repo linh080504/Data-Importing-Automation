@@ -19,10 +19,12 @@ from app.models.data_source import DataSource
 from app.models.raw_record import RawRecord
 from app.schemas.ai_output import AIExtractorOutput
 from app.schemas.discovery import DiscoverySourceBundle
+from app.services.ai_enrichment import EnrichmentRequest, enrich_missing_fields
 from app.services.ai_extractor import ExtractRequest, extract_critical_fields
 from app.services.discovery_prompt import PromptDiscoveryRequest, discover_universities_from_prompt, prompt_result_to_bundle
 from app.services.discovery_sources import fetch_discovery_bundle_from_source
 from app.services.gemini_client import GeminiRateLimitError, build_gemini_client
+from app.services.ai_provider_router import build_extractor_client, build_judge_client
 from app.services.source_adapters.escaped_jsonld import load_escaped_jsonld_item_list
 from app.services.ai_judge import JudgeRequest, judge_extraction
 from app.services.cleaner import generate_clean_record
@@ -32,9 +34,31 @@ from app.services.required_fields import required_fields_for_job
 from app.services.scoring import calculate_weighted_confidence
 from app.services.source_registry import build_trusted_source_discovery_input
 from app.services.supplemental_registry import build_supplemental_discovery_input
+from app.services.template_defaults import defaults_for_job
 from app.services.validator import validate_critical_fields
+from app.services.country_location import location_code_for_country
 
 logger = logging.getLogger(__name__)
+
+AI_ENRICHMENT_MIN_CONFIDENCE = 0.80
+AI_ENRICHMENT_STRICT_MIN_CONFIDENCE = 0.90
+AI_ENRICHMENT_EXACT_MIN_CONFIDENCE = 0.95
+AI_ENRICHABLE_FIELDS = {
+    "admissions_contact",
+    "admissions_page_link",
+    "admissions_phone",
+    "campus_student_life",
+    "description",
+    "financials",
+    "global_rank",
+    "international_student_ratio",
+    "number_of_students",
+    "student_to_faculty_ratio",
+    "university_campuses",
+    "website",
+}
+AI_EXACT_ENRICHMENT_FIELDS = {"admissions_contact", "admissions_phone", "contact_person"}
+AI_STRICT_ENRICHMENT_FIELDS = {"financials", "global_rank", *AI_EXACT_ENRICHMENT_FIELDS}
 
 
 class DirectRunError(RuntimeError):
@@ -138,7 +162,20 @@ def _evidence_url_for_field(raw_payload: dict[str, Any], field_name: str) -> str
         candidate_payloads.append(source_payloads[source_id])
     candidate_payloads.append(raw_payload)
 
+    field_specific_url_keys = {
+        "admissions_contact": ("admissions_page_link",),
+        "admissions_phone": ("admissions_page_link",),
+        "campus_student_life": ("campus_student_life_source_url",),
+        "financials": ("financials_source_url",),
+        "housing_availability": ("housing_source_url",),
+        "immigration_support": ("international_source_url",),
+        "student_loan_available": ("financials_source_url",),
+    }
     for payload in candidate_payloads:
+        for key in field_specific_url_keys.get(field_name, ()):
+            value = payload.get(key)
+            if isinstance(value, str) and value.strip():
+                return value.strip()
         for key in ("source_url", "source_href", "url", "website", "admissions_page_link"):
             value = payload.get(key)
             if isinstance(value, str) and value.strip():
@@ -211,6 +248,133 @@ def _build_clean_candidate_from_row(
     return AIExtractorOutput.model_validate(payload)
 
 
+def _discovery_input_payload(job: CrawlJob | object) -> dict[str, Any]:
+    value = getattr(job, "discovery_input", None)
+    return value if isinstance(value, dict) else {}
+
+
+def _ai_enrichment_enabled_for_job(job: CrawlJob | object) -> bool:
+    if not getattr(job, "ai_assist", False):
+        return False
+    settings = get_settings()
+    provider = str(getattr(settings, "extraction_provider", "gemini")).strip().lower()
+    if provider == "claude":
+        if not getattr(settings, "has_anthropic_api_key", lambda: False)():
+            return False
+    elif provider == "gemini":
+        if not getattr(settings, "has_gemini_api_key", lambda: False)():
+            return False
+    else:
+        return False
+    payload = _discovery_input_payload(job)
+    return payload.get("enable_ai_enrichment", True) is not False
+
+
+def _ai_enrichment_min_confidence(field_name: str) -> float:
+    field_key = field_name.lower()
+    if field_key in AI_EXACT_ENRICHMENT_FIELDS:
+        return AI_ENRICHMENT_EXACT_MIN_CONFIDENCE
+    if field_key in AI_STRICT_ENRICHMENT_FIELDS:
+        return AI_ENRICHMENT_STRICT_MIN_CONFIDENCE
+    return AI_ENRICHMENT_MIN_CONFIDENCE
+
+
+def _missing_fields_for_ai_enrichment(extractor_output: AIExtractorOutput) -> list[str]:
+    missing: list[str] = []
+    for field_name, field_payload in extractor_output.critical_fields.items():
+        if field_name not in AI_ENRICHABLE_FIELDS:
+            continue
+        if _is_blank_candidate_value(field_payload.value):
+            missing.append(field_name)
+    return missing
+
+
+def _known_fields_for_ai_enrichment(prepared_row: "PreparedRow") -> dict[str, object]:
+    known: dict[str, object] = {}
+    for field_name, value in prepared_row.normalized.items():
+        if field_name.startswith("_") or _is_blank_candidate_value(value):
+            continue
+        if field_name.endswith("_source_url"):
+            continue
+        if field_name in {"sources", "_merge"}:
+            continue
+        known[field_name] = value
+    return known
+
+
+def _enriched_value_passes_validation(field_name: str, value: object) -> bool:
+    return validate_critical_fields({field_name: value}).is_valid
+
+
+def _apply_ai_enrichment(
+    base_output: AIExtractorOutput,
+    enrichment_output: AIExtractorOutput,
+    *,
+    missing_fields: list[str],
+) -> AIExtractorOutput:
+    payload = base_output.model_dump(mode="json")
+    critical_fields = payload.get("critical_fields", {})
+    if not isinstance(critical_fields, dict):
+        return base_output
+
+    accepted_fields: list[str] = []
+    for field_name in missing_fields:
+        enriched = enrichment_output.critical_fields.get(field_name)
+        if enriched is None or _is_blank_candidate_value(enriched.value):
+            continue
+        min_confidence = _ai_enrichment_min_confidence(field_name)
+        if enriched.confidence < min_confidence:
+            continue
+        if not _enriched_value_passes_validation(field_name, enriched.value):
+            continue
+
+        critical_fields[field_name] = {
+            "value": enriched.value,
+            "confidence": enriched.confidence,
+            "source_excerpt": enriched.source_excerpt or "AI enrichment accepted with high model confidence.",
+            "evidence_url": None,
+            "evidence_source": enriched.evidence_source or "ai_enrichment_model_memory",
+            "evidence_required": False,
+        }
+        accepted_fields.append(field_name)
+
+    if accepted_fields:
+        notes = payload.setdefault("extraction_notes", [])
+        if isinstance(notes, list):
+            notes.append(f"AI enrichment filled high-confidence missing fields: {', '.join(accepted_fields)}.")
+    return AIExtractorOutput.model_validate(payload)
+
+
+def _enrich_source_candidate_with_ai(
+    job: CrawlJob | object,
+    prepared_row: "PreparedRow",
+    extractor_output: AIExtractorOutput,
+) -> AIExtractorOutput:
+    if not _ai_enrichment_enabled_for_job(job):
+        return extractor_output
+    missing_fields = _missing_fields_for_ai_enrichment(extractor_output)
+    if not missing_fields:
+        return extractor_output
+
+    country = getattr(job, "country", None)
+    location_code = location_code_for_country(country) if country else None
+    try:
+        enrichment_output = enrich_missing_fields(
+            EnrichmentRequest(
+                known_fields=_known_fields_for_ai_enrichment(prepared_row),
+                missing_fields=missing_fields,
+                country=country,
+                location_code=location_code,
+            ),
+            client=build_extractor_client(),
+        )
+    except Exception:
+        logger.exception("AI enrichment failed for row %s. Missing fields will remain null.", prepared_row.unique_key)
+        return extractor_output
+
+    return _apply_ai_enrichment(extractor_output, enrichment_output, missing_fields=missing_fields)
+
+
 def _count_clean_status(status: str) -> tuple[int, int, int]:
     if status == "APPROVED":
         return 1, 0, 0
@@ -230,19 +394,33 @@ def _extractor_output_for_row(
 ) -> AIExtractorOutput:
     target_fields = _target_fields_for_row(prepared_row, job.critical_fields, template_columns)
     if _is_source_based_crawl(job):
-        return _build_clean_candidate_from_row(prepared_row, job.critical_fields, template_columns)
+        source_candidate = _build_clean_candidate_from_row(prepared_row, job.critical_fields, template_columns)
+        return _enrich_source_candidate_with_ai(job, prepared_row, source_candidate)
 
-    if job.ai_assist:
+    country = getattr(job, "country", None)
+    location_code = location_code_for_country(country) if country else None
+
+    if getattr(job, "ai_assist", False):
         try:
-            gemini_client = build_gemini_client()
+            extractor_client = build_extractor_client()
             return extract_critical_fields(
-                ExtractRequest(raw_text=prepared_row.raw_text, critical_fields=target_fields),
-                client=gemini_client,
+                ExtractRequest(
+                    raw_text=prepared_row.raw_text, 
+                    critical_fields=target_fields,
+                    country=country,
+                    location_code=location_code,
+                ),
+                client=extractor_client,
             )
         except Exception:
             logger.exception("AI extractor failed for row %s. Falling back to rule-based extractor.", prepared_row.unique_key)
     return extract_critical_fields(
-        ExtractRequest(raw_text=prepared_row.raw_text, critical_fields=target_fields),
+        ExtractRequest(
+            raw_text=prepared_row.raw_text, 
+            critical_fields=target_fields,
+            country=country,
+            location_code=location_code,
+        ),
         client=RuleBasedExtractorClient(prepared_row.normalized, target_fields),
     )
 
@@ -254,18 +432,31 @@ def _judge_output_for_row(
     rule_validation,
     required_fields: list[str],
 ):
+    country = getattr(job, "country", None)
+    location_code = location_code_for_country(country) if country else None
+
     request = JudgeRequest(
         raw_text=prepared_row.raw_text,
         extractor_output=extractor_output,
         rule_validation=rule_validation,
+        country=country,
+        location_code=location_code,
+        critical_fields=required_fields,
     )
     if _should_use_ai_judge(job, extractor_output, rule_validation):
         try:
-            gemini_client = build_gemini_client()
-            return judge_extraction(request, client=gemini_client)
+            judge_client = build_judge_client()
+            return judge_extraction(request, client=judge_client)
         except Exception:
             logger.exception("AI judge failed for row %s. Falling back to rule-based judge.", prepared_row.unique_key)
-    return judge_extraction(request, client=RuleBasedJudgeClient(extractor_output, required_fields))
+    return judge_extraction(
+        request,
+        client=RuleBasedJudgeClient(
+            extractor_output,
+            required_fields,
+            expected_country=country,
+        ),
+    )
 
 
 def _field_has_evidence(field_payload: object) -> bool:
@@ -316,6 +507,8 @@ def _status_from_progress(*, total_records: int, approved: int, needs_review: in
 
 
 class RuleBasedExtractorClient:
+    requires_api_key = False
+
     def __init__(self, row: dict[str, Any], critical_fields: list[str]) -> None:
         self.row = row
         self.critical_fields = critical_fields
@@ -354,31 +547,116 @@ class RuleBasedExtractorClient:
         return json.dumps(payload, ensure_ascii=False)
 
 
+def _rule_based_field_confidence(field_name: str, field_payload: Any, *, has_issue: bool) -> int:
+    value = getattr(field_payload, "value", None)
+    if _is_blank_candidate_value(value):
+        return 35
+    if has_issue:
+        return 55
+
+    field_key = field_name.lower()
+    has_evidence = any(
+        isinstance(getattr(field_payload, key, None), str) and getattr(field_payload, key).strip()
+        for key in ("source_excerpt", "evidence_url", "evidence_source")
+    )
+    if field_key == "name":
+        base = 86
+    elif field_key in {"website", "admissions_page_link"}:
+        base = 82
+    elif field_key == "location":
+        base = 88
+    elif field_key in {"country", "number_of_students", "student_to_faculty_ratio", "international_student_ratio"}:
+        base = 78
+    elif field_key == "financials":
+        base = 82 if has_evidence else 52
+    elif field_key in {"description", "global_rank", "university_campuses", "campus_student_life"}:
+        base = 74
+    elif field_key in {"admissions_contact", "admissions_phone"}:
+        base = 82 if has_evidence else 52
+    elif field_key in {"housing_availability", "immigration_support", "student_loan_available", "contact_person"}:
+        base = 68
+    else:
+        base = 72
+
+    evidence_source = getattr(field_payload, "evidence_source", None)
+    if isinstance(evidence_source, str) and evidence_source == "ai_enrichment_model_memory":
+        model_confidence = getattr(field_payload, "confidence", 0.0)
+        if isinstance(model_confidence, (int, float)):
+            base = max(base, round(float(model_confidence) * 100))
+
+    return base if has_evidence else min(base, 58)
+
+
+def _rule_based_judge_payload(
+    extractor_output: AIExtractorOutput,
+    required_fields: list[str],
+    *,
+    expected_country: str | None = None,
+) -> dict[str, Any]:
+    extracted = {field: value.value for field, value in extractor_output.critical_fields.items()}
+    validation = validate_critical_fields(
+        extracted,
+        required_fields=required_fields,
+        expected_country=expected_country,
+    )
+    issue_by_field = {issue.field: issue for issue in validation.issues}
+    fields_validation: dict[str, dict[str, Any]] = {}
+    required_field_set = set(required_fields)
+
+    for field_name, field_payload in extractor_output.critical_fields.items():
+        matching_issue = issue_by_field.get(field_name)
+        value_missing = _is_blank_candidate_value(field_payload.value)
+        is_required = field_name in required_field_set
+        if value_missing and not is_required:
+            confidence = 85
+            is_correct = True
+            reason = "No source-backed value was captured; field will stay null instead of being guessed."
+        else:
+            confidence = _rule_based_field_confidence(field_name, field_payload, has_issue=matching_issue is not None)
+            is_correct = matching_issue is None and not value_missing and confidence >= 65
+        if value_missing and is_required:
+            reason = "No source-backed value was captured for this required field."
+        elif matching_issue is not None:
+            reason = matching_issue.message
+        elif confidence < 80:
+            reason = "Source-backed value captured, but this field is hard to verify automatically."
+        elif not value_missing:
+            reason = "Source-backed value captured and format validation passed."
+        fields_validation[field_name] = {
+            "is_correct": is_correct,
+            "corrected_value": None,
+            "confidence": confidence,
+            "reason": reason,
+        }
+
+    overall = round(sum(item["confidence"] for item in fields_validation.values()) / len(fields_validation)) if fields_validation else 0
+    status = "APPROVED" if fields_validation and all(item["is_correct"] for item in fields_validation.values()) and overall >= 80 else "NEEDS_REVIEW"
+    return {
+        "fields_validation": fields_validation,
+        "overall_confidence": overall,
+        "status": status,
+        "summary": "Rule-based source validation completed with conservative confidence.",
+    }
+
+
 class RuleBasedJudgeClient:
-    def __init__(self, extractor_output: AIExtractorOutput, required_fields: list[str]) -> None:
+    requires_api_key = False
+
+    def __init__(self, extractor_output: AIExtractorOutput, required_fields: list[str], *, expected_country: str | None = None) -> None:
         self.extractor_output = extractor_output
         self.required_fields = required_fields
+        self.expected_country = expected_country
 
     def generate_json(self, *, prompt: str) -> str:
         del prompt
-        extracted = {field: value.value for field, value in self.extractor_output.critical_fields.items()}
-        validation = validate_critical_fields(extracted, required_fields=self.required_fields)
-        fields_validation = {}
-        for field in extracted:
-            matching_issue = next((issue for issue in validation.issues if issue.field == field), None)
-            fields_validation[field] = {
-                "is_correct": matching_issue is None,
-                "corrected_value": None,
-                "confidence": 96 if matching_issue is None else 60,
-                "reason": "Matches source" if matching_issue is None else matching_issue.message,
-            }
-        payload = {
-            "fields_validation": fields_validation,
-            "overall_confidence": 96 if validation.is_valid else 60,
-            "status": "APPROVED" if validation.is_valid else "NEEDS_REVIEW",
-            "summary": "Rule-based validation completed.",
-        }
-        return json.dumps(payload, ensure_ascii=False)
+        return json.dumps(
+            _rule_based_judge_payload(
+                self.extractor_output,
+                self.required_fields,
+                expected_country=self.expected_country,
+            ),
+            ensure_ascii=False,
+        )
 
 
 @dataclass
@@ -431,8 +709,32 @@ def _canonical_text(value: object) -> str:
     text = "".join(char for char in text if not unicodedata.combining(char))
     text = text.replace("đ", "d")
     text = text.replace("viet nam", "vietnam")
+    text = text.replace("ha noi", "hanoi")
     text = re.sub(r"[^a-z0-9]+", " ", text)
     return " ".join(text.split())
+
+
+def _is_generic_school_name(name_key: str) -> bool:
+    words = name_key.split()
+    if len(words) <= 4 and name_key.startswith(("university of ", "college of ", "institute of ", "academy of ", "school of ")):
+        return True
+    return name_key in {
+        "university of science",
+        "university of education",
+        "university of medicine and pharmacy",
+        "university of economics",
+        "university of technology",
+    }
+
+
+def _source_url_key(row: "PreparedRow") -> str:
+    for key in ("source_url", "source_href", "reference_url", "website"):
+        value = row.normalized.get(key)
+        if isinstance(value, str) and value.strip():
+            parsed = value.strip().lower()
+            parsed = parsed.split("#", 1)[0].rstrip("/")
+            return _canonical_text(parsed.rsplit("/", 1)[-1] or parsed)
+    return ""
 
 
 def _merge_key_for_row(prepared_row: "PreparedRow") -> str:
@@ -442,6 +744,10 @@ def _merge_key_for_row(prepared_row: "PreparedRow") -> str:
     name_key = _canonical_text(prepared_row.normalized.get("name"))
     if name_key:
         country_key = _canonical_text(prepared_row.normalized.get("country"))
+        if _is_generic_school_name(name_key):
+            url_key = _source_url_key(prepared_row)
+            if url_key:
+                return f"name:{country_key}:{name_key}:url:{url_key}"
         return f"name:{country_key}:{name_key}"
     return f"unique:{unique_key}"
 
@@ -468,6 +774,29 @@ def _clean_record_for_job_key(db: Session, *, job_id: str, unique_key: str) -> C
         return None
 
 
+def _should_reprocess_record(settings, existing_clean: CleanRecord | object | None) -> bool:
+    if not bool(getattr(settings, "crawl_resume_failed_only", True)):
+        return True
+    if existing_clean is None:
+        return True
+    status = str(getattr(existing_clean, "status", "")).upper()
+    return status in {"NEEDS_REVIEW", "REJECTED", "FAILED", "ERROR"}
+
+
+def _should_skip_unchanged_record(
+    settings,
+    *,
+    existing_clean: CleanRecord | object | None,
+    prepared_row: "PreparedRow",
+    target_fields: list[str],
+) -> bool:
+    if not _should_reprocess_record(settings, existing_clean):
+        return True
+    if existing_clean is None:
+        return False
+    return _clean_record_covers_fields(existing_clean, prepared_row, target_fields)
+
+
 def _clean_record_covers_fields(clean_record: CleanRecord | object, prepared_row: "PreparedRow", target_fields: list[str]) -> bool:
     clean_payload = getattr(clean_record, "clean_payload", None)
     if not isinstance(clean_payload, dict):
@@ -482,6 +811,94 @@ def _clean_record_covers_fields(clean_record: CleanRecord | object, prepared_row
         if _is_empty_value(clean_value) and not _is_empty_value(raw_value):
             return False
     return True
+
+
+def _target_record_count_for_job(job: CrawlJob | object) -> int | None:
+    value = _discovery_input_payload(job).get("target_record_count")
+    try:
+        parsed = int(value)  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        return None
+    return parsed if parsed > 0 else None
+
+
+def _quality_mode_for_job(job: CrawlJob | object) -> str:
+    return str(_discovery_input_payload(job).get("quality_mode") or "balanced")
+
+
+def _row_source_quality_bonus(row: MergedPreparedRow) -> int:
+    raw_payload = row.raw_payload if isinstance(row.raw_payload, dict) else {}
+    source_url = str(raw_payload.get("source_url") or raw_payload.get("source_href") or raw_payload.get("reference_url") or "")
+    website = str(row.normalized.get("website") or "")
+    score = 0
+    if website.startswith("http"):
+        score += 12
+    if "wikipedia.org/wiki/" in source_url and "List_of_" not in source_url:
+        score += 8
+    if "topuniversities.com" in source_url:
+        score += 4
+    if "unirank.org" in source_url:
+        score += 3
+    return score
+
+
+def _row_quality_score(row: MergedPreparedRow, critical_fields: list[str], template_columns: list[dict[str, Any]] | None) -> int:
+    template_fields = _column_names(template_columns)
+    score = _row_source_quality_bonus(row)
+    for field_name in critical_fields:
+        if not _is_blank_candidate_value(_candidate_value_for_field(row, field_name)):
+            score += 10
+    for field_name in template_fields:
+        if not _is_blank_candidate_value(_candidate_value_for_field(row, field_name)):
+            score += 2
+    for field_name in ("name", "website", "description", "financials", "admissions_page_link", "number_of_students"):
+        if not _is_blank_candidate_value(_candidate_value_for_field(row, field_name)):
+            score += 4
+    conflicts = row.merge_metadata.get("conflicts") if isinstance(row.merge_metadata, dict) else {}
+    if isinstance(conflicts, dict):
+        score -= 5 * len(conflicts)
+    return score
+
+
+def _limit_rows_for_quality_target(
+    rows: list[MergedPreparedRow],
+    *,
+    job: CrawlJob | object,
+    template_columns: list[dict[str, Any]] | None,
+) -> list[MergedPreparedRow]:
+    target_count = _target_record_count_for_job(job)
+    if target_count is None or len(rows) <= target_count:
+        return rows
+    if _quality_mode_for_job(job) != "high_confidence":
+        return rows[:target_count]
+
+    indexed_rows = list(enumerate(rows))
+    indexed_rows.sort(
+        key=lambda item: (
+            _row_quality_score(item[1], list(getattr(job, "critical_fields", []) or []), template_columns),
+            -item[0],
+        ),
+        reverse=True,
+    )
+    selected_indexes = {index for index, _row in indexed_rows[:target_count]}
+    return [row for index, row in enumerate(rows) if index in selected_indexes]
+
+
+def _apply_template_defaults_to_rows(rows: list[MergedPreparedRow], defaults: dict[str, object]) -> None:
+    for row in rows:
+        for field_name in ("country", "location"):
+            default_value = defaults.get(field_name)
+            if _is_blank_candidate_value(default_value):
+                continue
+            current_value = row.normalized.get(field_name)
+            if field_name == "location":
+                should_apply = _is_blank_candidate_value(current_value) or not isinstance(current_value, int)
+            else:
+                should_apply = _is_blank_candidate_value(current_value)
+            if not should_apply:
+                continue
+            row.normalized[field_name] = default_value
+            row.raw_payload[field_name] = default_value
 
 
 def _source_label(source: object) -> str:
@@ -523,11 +940,12 @@ def _field_value_from_row(raw_payload: dict[str, Any], field_name: str) -> Any:
     return raw_payload.get(field_name)
 
 
-def _annotate_judge_output(*, judge_output: Any, merge_metadata: dict[str, Any], extracted_values: dict[str, Any]) -> None:
+def _annotate_judge_output(*, judge_output: Any, merge_metadata: dict[str, Any], extracted_values: dict[str, Any], critical_fields: list[str]) -> None:
     field_sources = merge_metadata.get("field_sources") or {}
     conflicts = merge_metadata.get("conflicts") or {}
     source_names = merge_metadata.get("source_names") or {}
     fields_validation = getattr(judge_output, "fields_validation", {}) or {}
+    has_review_blocker = False
 
     for field_name, validation in fields_validation.items():
         if field_name in field_sources:
@@ -545,6 +963,9 @@ def _annotate_judge_output(*, judge_output: Any, merge_metadata: dict[str, Any],
             ] if chosen_source_id is not None else []
             conflict_entries.extend(conflicts[field_name])
             validation.reason = f"{validation.reason} Conflict detected across sources."
+            validation.is_correct = False
+            validation.confidence = min(validation.confidence, 70)
+            has_review_blocker = True
             setattr(validation, "_merge_conflicts", conflict_entries)
             setattr(validation, "_merge_source_id", chosen_source_id)
             setattr(validation, "_merge_source_name", source_names.get(chosen_source_id, chosen_source_id) if chosen_source_id is not None else None)
@@ -555,6 +976,15 @@ def _annotate_judge_output(*, judge_output: Any, merge_metadata: dict[str, Any],
 
         if field_name in field_sources:
             setattr(validation, "_merge_from_secondary", field_sources[field_name] != (merge_metadata.get("source_order") or [None])[0])
+
+        if not validation.is_correct:
+            if field_name in critical_fields:
+                has_review_blocker = True
+            else:
+                validation.corrected_value = None
+
+    if has_review_blocker and getattr(judge_output, "status", None) == "APPROVED":
+        judge_output.status = "NEEDS_REVIEW"
 
 
 def _judge_output_payload(judge_output: Any) -> dict[str, Any]:
@@ -1260,6 +1690,8 @@ def run_crawl_job_direct(db: Session, *, job: CrawlJob | object) -> DirectRunRes
     prepared_sources = _resolve_discovery_sources(db, job=job)
     merged_rows = _merge_prepared_sources(prepared_sources)
     template_columns = _template_columns_for_job(db, job)
+    _apply_template_defaults_to_rows(merged_rows, defaults_for_job(job))
+    merged_rows = _limit_rows_for_quality_target(merged_rows, job=job, template_columns=template_columns)
     total_records = len(merged_rows)
     crawled = len(merged_rows)
 
@@ -1295,6 +1727,8 @@ def run_crawl_job_direct(db: Session, *, job: CrawlJob | object) -> DirectRunRes
         db.add(job)
         db.commit()
 
+    settings = get_settings()
+
     for index, prepared_row in enumerate(merged_rows, start=1):
         try:
             target_fields = _target_fields_for_row(prepared_row, job.critical_fields, template_columns)
@@ -1308,13 +1742,18 @@ def run_crawl_job_direct(db: Session, *, job: CrawlJob | object) -> DirectRunRes
             )
             if not raw_result.changed:
                 existing_clean = _clean_record_for_job_key(db, job_id=job.id, unique_key=prepared_row.unique_key)
-                if existing_clean is not None and _clean_record_covers_fields(existing_clean, prepared_row, target_fields):
+                if _should_skip_unchanged_record(
+                    settings,
+                    existing_clean=existing_clean,
+                    prepared_row=prepared_row,
+                    target_fields=target_fields,
+                ):
                     skipped += 1
                     processed += 1
                     clean_candidates += 1
-                    if getattr(existing_clean, "status", None) != "REJECTED":
+                    if existing_clean is not None and getattr(existing_clean, "status", None) != "REJECTED":
                         cleaned += 1
-                    approved_inc, needs_review_inc, rejected_inc = _count_clean_status(str(getattr(existing_clean, "status", "NEEDS_REVIEW")))
+                    approved_inc, needs_review_inc, rejected_inc = _count_clean_status(str(getattr(existing_clean, "status", "NEEDS_REVIEW"))) if existing_clean is not None else (0, 0, 0)
                     approved += approved_inc
                     needs_review += needs_review_inc
                     rejected += rejected_inc
@@ -1327,13 +1766,18 @@ def run_crawl_job_direct(db: Session, *, job: CrawlJob | object) -> DirectRunRes
             processed += 1
             extracted_values = {field: value.value for field, value in extractor_output.critical_fields.items()}
             required_fields = required_fields_for_job(job, template_columns)
-            rule_validation = validate_critical_fields(extracted_values, required_fields=required_fields)
+            rule_validation = validate_critical_fields(
+                extracted_values,
+                required_fields=required_fields,
+                expected_country=getattr(job, "country", None),
+            )
             judge_output = _judge_output_for_row(job, prepared_row, extractor_output, rule_validation, required_fields)
 
             _annotate_judge_output(
                 judge_output=judge_output,
                 merge_metadata=prepared_row.merge_metadata,
                 extracted_values=extracted_values,
+                critical_fields=required_fields,
             )
             scoring = calculate_weighted_confidence(judge_output, required_fields=required_fields)
             ai_log = _log_ai_extraction_with_merge(
@@ -1344,7 +1788,12 @@ def run_crawl_job_direct(db: Session, *, job: CrawlJob | object) -> DirectRunRes
                 scoring=scoring,
                 merge_metadata=prepared_row.merge_metadata,
             )
-            clean_result = generate_clean_record(db, raw_record=raw_record, ai_log=ai_log)
+            clean_result = generate_clean_record(
+                db,
+                raw_record=raw_record,
+                ai_log=ai_log,
+                template_columns=template_columns,
+            )
             clean_candidates += 1
             if clean_result.clean_record.status != "REJECTED":
                 cleaned += 1
@@ -1424,30 +1873,23 @@ def run_crawl_job_direct(db: Session, *, job: CrawlJob | object) -> DirectRunRes
 
 
 class RuleBasedJudgeClient:
-    def __init__(self, extractor_output: AIExtractorOutput, required_fields: list[str]) -> None:
+    requires_api_key = False
+
+    def __init__(self, extractor_output: AIExtractorOutput, required_fields: list[str], *, expected_country: str | None = None) -> None:
         self.extractor_output = extractor_output
         self.required_fields = required_fields
+        self.expected_country = expected_country
 
     def generate_json(self, *, prompt: str) -> str:
         del prompt
-        extracted = {field: value.value for field, value in self.extractor_output.critical_fields.items()}
-        validation = validate_critical_fields(extracted, required_fields=self.required_fields)
-        fields_validation = {}
-        for field in extracted:
-            matching_issue = next((issue for issue in validation.issues if issue.field == field), None)
-            fields_validation[field] = {
-                "is_correct": matching_issue is None,
-                "corrected_value": None,
-                "confidence": 96 if matching_issue is None else 60,
-                "reason": "Matches source" if matching_issue is None else matching_issue.message,
-            }
-        payload = {
-            "fields_validation": fields_validation,
-            "overall_confidence": 96 if validation.is_valid else 60,
-            "status": "APPROVED" if validation.is_valid else "NEEDS_REVIEW",
-            "summary": "Rule-based validation completed.",
-        }
-        return json.dumps(payload, ensure_ascii=False)
+        return json.dumps(
+            _rule_based_judge_payload(
+                self.extractor_output,
+                self.required_fields,
+                expected_country=self.expected_country,
+            ),
+            ensure_ascii=False,
+        )
 
 
 @dataclass

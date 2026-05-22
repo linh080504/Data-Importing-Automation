@@ -18,6 +18,7 @@ export function ReviewActionPanel({ recordId, field }: { recordId: string; field
   const [finalValue, setFinalValue] = useState(field.finalValue === null ? "" : String(field.finalValue));
   const [note, setNote] = useState("");
   const [message, setMessage] = useState<string | null>(null);
+  const [savedValue, setSavedValue] = useState<string | number | boolean | null>(field.finalValue);
   const [isSaving, setIsSaving] = useState(false);
 
   async function handleAction(action: "ACCEPT" | "EDIT" | "REJECT" | "UNKNOWN") {
@@ -37,7 +38,8 @@ export function ReviewActionPanel({ recordId, field }: { recordId: string; field
       return;
     }
 
-    setMessage(successActions[action]);
+    setSavedValue(result.finalValue);
+    setMessage(`${successActions[action]} Final value: ${result.finalValue === null ? "Blank" : String(result.finalValue)}`);
     setNote("");
     router.refresh();
   }
@@ -96,6 +98,11 @@ export function ReviewActionPanel({ recordId, field }: { recordId: string; field
         </button>
       </div>
       {message ? <p className="text-sm text-slate-600">{message}</p> : null}
+      {savedValue !== null ? (
+        <p className="rounded-xl bg-emerald-50 px-3 py-2 text-sm text-emerald-800">
+          Saved in clean record: <span className="font-semibold">{String(savedValue)}</span>
+        </p>
+      ) : null}
       {isSaving ? <p className="text-sm text-slate-500">Refreshing review queue...</p> : null}
     </div>
   );

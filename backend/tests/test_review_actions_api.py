@@ -43,7 +43,20 @@ class FakeSession:
         self.log = SimpleNamespace(
             id=str(uuid4()),
             raw_record_id="raw_123",
+            overall_confidence=72,
             ai_1_payload={"critical_fields": {"email": {"value": "bad-email"}}},
+            ai_2_validation={
+                "judge_output": {
+                    "fields_validation": {
+                        "email": {
+                            "is_correct": False,
+                            "corrected_value": None,
+                            "confidence": 72,
+                            "reason": "Invalid format",
+                        }
+                    }
+                }
+            },
         )
         self.clean_record = SimpleNamespace(
             id=str(uuid4()),
@@ -104,5 +117,13 @@ def test_submit_review_action_updates_clean_record(monkeypatch) -> None:
     assert response.status_code == 200
     payload = response.json()
     assert payload["status"] == "SUCCESS"
+    assert payload["field_name"] == "email"
+    assert payload["final_value"] == "info@example.edu"
+    assert payload["record_status"] == "REVIEWED"
     assert session.clean_record.clean_payload["email"] == "info@example.edu"
     assert session.clean_record.status == "REVIEWED"
+    validation = session.log.ai_2_validation["judge_output"]["fields_validation"]["email"]
+    assert validation["is_correct"] is True
+    assert validation["corrected_value"] == "info@example.edu"
+    assert validation["confidence"] == 100
+    assert session.log.overall_confidence == 100

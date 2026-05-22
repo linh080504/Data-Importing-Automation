@@ -13,8 +13,21 @@ class Settings(BaseSettings):
     )
     gemini_api_key: str | None = None
     gemini_api_keys: str | None = None
-    gemini_model: str = "gemini-2.0-flash"
+    gemini_model: str = "gemma-4-31b"
     gemini_fallback_models: str | None = None
+    anthropic_api_key: str | None = None
+    extraction_provider: str = "claude"
+    extraction_model: str = "default"
+    extraction_retry_limit: int = 1
+    extraction_timeout_seconds: float = 45.0
+    extraction_allow_fallback: bool = False
+    judge_provider: str = "claude"
+    judge_model: str = "default-4-7"
+    judge_retry_limit: int = 1
+    judge_timeout_seconds: float = 45.0
+    judge_allow_fallback: bool = False
+    max_ai_calls_per_row: int = 2
+    crawl_resume_failed_only: bool = True
     n8n_webhook_secret: str | None = None
     n8n_callback_header: str = "X-N8N-Secret"
     internal_webhook_enabled: bool = True
@@ -28,6 +41,9 @@ class Settings(BaseSettings):
 
     def has_gemini_api_key(self) -> bool:
         return len(self.gemini_api_keys_list()) > 0
+
+    def has_anthropic_api_key(self) -> bool:
+        return bool(self.anthropic_api_key and self.anthropic_api_key.strip())
 
     def gemini_models_list(self) -> list[str]:
         primary_model = self.gemini_model.strip() if self.gemini_model and self.gemini_model.strip() else "gemini-2.0-flash"

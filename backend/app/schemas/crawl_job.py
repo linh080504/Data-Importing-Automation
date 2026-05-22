@@ -20,6 +20,9 @@ class CrawlDiscoveryInput(BaseModel):
     seed_sources: list[str] = Field(default_factory=list)
     selected_source_ids: list[str] = Field(default_factory=list)
     source_plan: dict[str, Any] | None = None
+    target_record_count: int | None = Field(default=None, ge=1, le=1000)
+    quality_mode: Literal["balanced", "high_confidence"] = "high_confidence"
+    enable_ai_enrichment: bool = True
 
     def as_payload(self) -> dict[str, Any]:
         return self.model_dump(exclude_none=True)

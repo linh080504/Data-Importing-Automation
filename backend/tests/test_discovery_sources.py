@@ -33,6 +33,89 @@ def test_fetch_discovery_bundle_from_unirank_ranking_html(monkeypatch) -> None:
     assert bundle.rows[0].raw_payload["source_url"] == "https://www.unirank.org/vn/uni/example-university/"
 
 
+def test_fetch_discovery_bundle_from_unirank_enriches_detail_and_official_site(monkeypatch) -> None:
+    ranking_html = '''
+    <html><body>
+      <a href="/vn/uni/example-university/">Example University</a>
+    </body></html>
+    '''
+    detail_html = '''
+    <html><head>
+      <meta name="description" content="Example University is a public university in Hanoi with engineering and science programs.">
+    </head><body>
+      <h1>Example University</h1>
+      <a href="https://example.edu/">Official Website</a>
+      <p>Location: Hanoi, Vietnam</p>
+    </body></html>
+    '''
+    official_html = '''
+    <html><body>
+      <a href="/admissions">Admissions</a>
+      <a href="/tuition">Tuition and fees</a>
+      <a href="/housing">Housing</a>
+      <p>Contact admissions@example.edu or +84 24 1234 5678 for admissions.</p>
+      <p>Tuition fees are 18,000,000 VND per year for undergraduate programs.</p>
+      <p>Student housing is available on campus.</p>
+    </body></html>
+    '''
+
+    def fake_request_public_html(method, url, *, parser_variant, referer=None):
+        if parser_variant == "ranking_html":
+            return ranking_html
+        if parser_variant == "ranking_detail_html":
+            return detail_html
+        raise AssertionError(f"Unexpected {parser_variant} {url}")
+
+    monkeypatch.setattr("app.services.discovery_sources._request_public_html", fake_request_public_html)
+    monkeypatch.setattr("app.services.discovery_sources._request_official_html", lambda url, referer=None: official_html)
+
+    source = SimpleNamespace(
+        id="src_unirank",
+        source_name="uniRank Vietnam Rankings",
+        config={
+            "source_type": "official_catalog_html",
+            "url": "https://www.unirank.org/vn/ranking/",
+            "parser_variant": "ranking_html",
+            "enrich_detail_pages": True,
+            "enrich_official_site": True,
+            "max_detail_pages": 1,
+            "max_official_sites": 1,
+        },
+    )
+
+    bundle = fetch_discovery_bundle_from_source(source, country="Vietnam", focus_fields=["financials", "housing_availability"])
+
+    row = bundle.rows[0].normalized
+    assert row["website"] == "https://example.edu/"
+    assert row.get("location") is None
+    assert row["description"].startswith("Example University is a public university")
+    assert row["admissions_contact"] == "admissions@example.edu"
+    assert row["admissions_phone"] == "+84 24 1234 5678"
+    assert "18,000,000 VND per year" in row["financials"]
+    assert row["housing_availability"] is True
+
+
+def test_official_site_enrichment_rejects_generic_financials_and_placeholder_phone(monkeypatch) -> None:
+    from app.services.discovery_sources import _enrich_with_official_site
+
+    official_html = '''
+    <html><body>
+      <a href="/admissions">Admissions</a>
+      <a href="/tuition">Tuition and fees</a>
+      <p>Admissions phone: 123456</p>
+      <p>Tuition fees vary by program and are published annually.</p>
+    </body></html>
+    '''
+
+    monkeypatch.setattr("app.services.discovery_sources._request_official_html", lambda url, referer=None: official_html)
+
+    row = {"website": "https://example.edu/"}
+    _enrich_with_official_site(row)
+
+    assert row.get("admissions_phone") is None
+    assert row.get("financials") is None
+
+
 def test_fetch_discovery_bundle_from_wikipedia_list_html_filters_navigation(monkeypatch) -> None:
     html = '''
     <html><body>
@@ -65,6 +148,81 @@ def test_fetch_discovery_bundle_from_wikipedia_list_html_filters_navigation(monk
     assert bundle.rows[0].normalized.get("website") is None
     assert bundle.rows[0].normalized["source_url"] == "https://en.wikipedia.org/wiki/Example_University"
     assert bundle.rows[0].unique_key == "https://en.wikipedia.org/wiki/Example_University"
+
+
+def test_fetch_discovery_bundle_from_wikipedia_list_html_reads_table_rows_without_article_links(monkeypatch) -> None:
+    html = '''
+    <html><body>
+      <div id="mw-content-text">
+        <table class="wikitable">
+          <tr><th>No.</th><th>Location</th><th>English name</th><th>Vietnamese name</th></tr>
+          <tr>
+            <td>1</td>
+            <td>Hanoi</td>
+            <td>Vietnam Aviation Academy</td>
+            <td>Hoc vien Hang khong Viet Nam</td>
+          </tr>
+          <tr>
+            <td>2</td>
+            <td>Hanoi</td>
+            <td><a href="./Hanoi_University_of_Science_and_Technology">Hanoi University of Science and Technology</a></td>
+            <td>Dai hoc Bach khoa Ha Noi</td>
+          </tr>
+        </table>
+      </div>
+    </body></html>
+    '''
+
+    monkeypatch.setattr("app.services.discovery_sources._request_text", lambda method, url: html)
+
+    source = SimpleNamespace(
+        id="src_wikipedia",
+        source_name="Wikipedia Vietnam Universities",
+        config={
+            "source_type": "official_catalog_html",
+            "url": "https://en.wikipedia.org/wiki/List_of_universities_in_Vietnam",
+            "parser_variant": "wikipedia_list_html",
+        },
+    )
+
+    bundle = fetch_discovery_bundle_from_source(source, country="Vietnam")
+
+    names = [row.normalized["name"] for row in bundle.rows]
+    assert "Vietnam Aviation Academy" in names
+    assert "Hanoi University of Science and Technology" in names
+    aviation_row = next(row for row in bundle.rows if row.normalized["name"] == "Vietnam Aviation Academy")
+    assert aviation_row.normalized.get("location") is None
+    assert aviation_row.unique_key.endswith("#vietnam-aviation-academy")
+
+
+def test_fetch_discovery_bundle_from_wikipedia_table_keeps_numeric_location_code(monkeypatch) -> None:
+    html = '''
+    <html><body>
+      <div id="mw-content-text">
+        <table class="wikitable">
+          <tr><th>English name</th><th>Location</th></tr>
+          <tr><td>Example University</td><td>356</td></tr>
+        </table>
+      </div>
+    </body></html>
+    '''
+
+    monkeypatch.setattr("app.services.discovery_sources._request_text", lambda method, url: html)
+
+    source = SimpleNamespace(
+        id="src_wikipedia",
+        source_name="Wikipedia Vietnam Universities",
+        config={
+            "source_type": "official_catalog_html",
+            "url": "https://en.wikipedia.org/wiki/List_of_universities_in_Vietnam",
+            "parser_variant": "wikipedia_list_html",
+        },
+    )
+
+    bundle = fetch_discovery_bundle_from_source(source, country="Vietnam")
+
+    assert bundle.rows[0].normalized["name"] == "Example University"
+    assert bundle.rows[0].normalized["location"] == 356
 
 
 def test_fetch_discovery_bundle_from_wikipedia_country_index_resolves_country_page(monkeypatch) -> None:
@@ -153,7 +311,7 @@ def test_fetch_discovery_bundle_from_wikipedia_country_index_enriches_article_an
       <a href="/admissions">Admissions</a>
       <a href="/tuition-and-fees">Tuition and fees</a>
       <p>Contact admissions@hust.edu.vn or +84 24 3869 4242 for admissions.</p>
-      <p>Tuition fees vary by program and are published annually.</p>
+      <p>Tuition fees range from 22,000,000 to 28,000,000 VND per year.</p>
     </body></html>
     '''
 
@@ -186,14 +344,14 @@ def test_fetch_discovery_bundle_from_wikipedia_country_index_enriches_article_an
 
     row = bundle.rows[0]
     assert row.normalized["name"] == "Hanoi University of Science and Technology"
-    assert row.normalized["location"] == "Hanoi, Vietnam"
+    assert row.normalized.get("location") is None
     assert row.normalized["website"] == "https://hust.edu.vn/"
     assert row.normalized["number_of_students"] == "35,000"
     assert row.normalized["university_campuses"] == "Urban"
     assert row.normalized["admissions_page_link"] == "https://hust.edu.vn/admissions"
     assert row.normalized["admissions_contact"] == "admissions@hust.edu.vn"
     assert row.normalized["admissions_phone"] == "+84 24 3869 4242"
-    assert "Tuition fees vary by program" in row.normalized["financials"]
+    assert "22,000,000 to 28,000,000 VND per year" in row.normalized["financials"]
     assert row.normalized["wikipedia_article_url"] == "https://en.wikipedia.org/wiki/Hanoi_University_of_Science_and_Technology"
 
 

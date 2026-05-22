@@ -16,8 +16,28 @@ DEFAULT_TRUSTED_SOURCE_CATALOG: dict[str, list[dict[str, Any]]] = {
                 "role": "reference",
                 "trust_level": "medium",
                 "parser_variant": "ranking_html",
+                "enrich_detail_pages": True,
+                "enrich_official_site": True,
+                "max_detail_pages": 160,
+                "max_official_sites": 80,
+                "detail_page_workers": 8,
+                "official_site_workers": 8,
             },
-            "supported_fields": ["name", "country", "source_url"],
+            "supported_fields": [
+                "name",
+                "country",
+                "location",
+                "description",
+                "website",
+                "source_url",
+                "admissions_page_link",
+                "admissions_contact",
+                "admissions_phone",
+                "financials",
+                "campus_student_life",
+                "housing_availability",
+                "immigration_support",
+            ],
         },
         {
             "name": "Wikidata Vietnam universities",
@@ -43,10 +63,10 @@ DEFAULT_TRUSTED_SOURCE_CATALOG: dict[str, list[dict[str, Any]]] = {
                 "parser_variant": "wikipedia_country_index_html",
                 "enrich_detail_pages": True,
                 "enrich_official_site": True,
-                "max_detail_pages": 240,
-                "max_official_sites": 40,
+                "max_detail_pages": 320,
+                "max_official_sites": 120,
                 "detail_page_workers": 8,
-                "official_site_workers": 5,
+                "official_site_workers": 8,
                 "country_aliases": {
                     "USA": "United States",
                     "US": "United States",
@@ -65,7 +85,13 @@ DEFAULT_TRUSTED_SOURCE_CATALOG: dict[str, list[dict[str, Any]]] = {
                 "admissions_contact",
                 "admissions_phone",
                 "financials",
+                "financials_source_url",
                 "campus_student_life",
+                "campus_student_life_source_url",
+                "housing_availability",
+                "housing_source_url",
+                "immigration_support",
+                "international_source_url",
                 "number_of_students",
                 "student_to_faculty_ratio",
                 "international_student_ratio",
@@ -95,12 +121,26 @@ DEFAULT_TRUSTED_SOURCE_CATALOG: dict[str, list[dict[str, Any]]] = {
 }
 
 
+def _catalog_priority(entry: dict[str, Any]) -> int:
+    name = str(entry.get("name") or "").lower()
+    if "wikipedia universities by country index" in name:
+        return 0
+    if "wikidata" in name:
+        return 1
+    if "unirank" in name:
+        return 2
+    if "qs world university rankings" in name:
+        return 3
+    return 10
+
+
 def _catalog_entries_for_country(country: str) -> list[dict[str, Any]]:
     requested_country = country.strip()
-    return [
+    entries = [
         *deepcopy(DEFAULT_TRUSTED_SOURCE_CATALOG.get(requested_country, [])),
         *deepcopy(DEFAULT_TRUSTED_SOURCE_CATALOG.get(_GLOBAL_SOURCE_COUNTRY, [])),
     ]
+    return sorted(entries, key=_catalog_priority)
 
 
 def recommended_sources_for_country(country: str) -> list[dict[str, Any]]:

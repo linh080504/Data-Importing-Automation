@@ -5,20 +5,33 @@
   --font-mono: var(--font-geist-mono);
 }
 
+/* Global Reset & Base Theme overrides for Premium Light Theme */
 html {
-  background: #f8fafc;
+  background-color: #f8fafc !important;
+  color: #0f172a !important;
   overflow-x: hidden;
+  scroll-behavior: smooth;
 }
 
 body {
+  background: radial-gradient(circle at 50% 0%, #eff6ff 0%, #f8fafc 80%) !important;
+  color: #1e293b !important;
   min-height: 100vh;
   overflow-x: hidden;
 }
 
-* {
-  box-sizing: border-box;
+/* Scrollbar styling */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
 }
-
-a {
-  text-decoration: none;
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: rgba(15, 23, 42, 0.12);
+  border-radius: 4px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(15, 23, 42, 0.25);
 }

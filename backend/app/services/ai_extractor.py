@@ -6,6 +6,7 @@ from typing import Protocol
 
 from app.core.config import get_settings
 from app.schemas.ai_output import AIExtractorOutput
+from app.services.prompt_rules import build_field_instructions
 
 
 class AIClientProtocol(Protocol):
@@ -16,6 +17,8 @@ class AIClientProtocol(Protocol):
 class ExtractRequest:
     raw_text: str
     critical_fields: list[str]
+    country: str | None = None
+    location_code: int | None = None
 
 
 class AIExtractorConfigurationError(RuntimeError):
@@ -28,6 +31,8 @@ class AIExtractorParseError(ValueError):
 
 def build_extractor_prompt(request: ExtractRequest) -> str:
     fields_json = json.dumps(request.critical_fields, ensure_ascii=False)
+    rules_text = build_field_instructions(country=request.country, location_code=request.location_code)
+    
     return (
         "You are a structured data extraction engine. "
         "Extract only the requested fields from the raw text. "
@@ -37,6 +42,7 @@ def build_extractor_prompt(request: ExtractRequest) -> str:
         "{\"critical_fields\": {\"field_name\": {\"value\": ..., \"confidence\": 0.0-1.0, \"source_excerpt\": ..., \"evidence_url\": ..., \"evidence_source\": ..., \"evidence_required\": true}}, \"extraction_notes\": [...]} . "
         "Do not include any fields outside the requested list. "
         "Use source_excerpt to quote or summarize the exact supporting text for each non-null value. "
+        f"\n{rules_text}\n"
         f"Requested fields: {fields_json}. "
         f"Raw text: {request.raw_text}"
     )
@@ -59,10 +65,18 @@ def extract_critical_fields(
     *,
     client: AIClientProtocol,
 ) -> AIExtractorOutput:
-    settings = get_settings()
-    if not settings.has_gemini_api_key():
-        raise AIExtractorConfigurationError("GEMINI_API_KEY is not configured")
+    if getattr(client, "requires_api_key", True):
+        settings = get_settings()
+        provider = getattr(settings, "extraction_provider", "gemini")
+        if provider == "claude":
+            if not getattr(settings, "has_anthropic_api_key", lambda: False)():
+                raise AIExtractorConfigurationError("ANTHROPIC_API_KEY is not configured")
+        else:
+            if not settings.has_gemini_api_key():
+                raise AIExtractorConfigurationError("GEMINI_API_KEY is not configured")
 
     prompt = build_extractor_prompt(request)
     response = client.generate_json(prompt=prompt)
     return parse_extractor_output(response)
+
+

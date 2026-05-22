@@ -49,6 +49,8 @@ def test_build_judge_prompt_includes_rule_findings_and_extractor_output() -> Non
     assert "Rule validation findings" in prompt
     assert "bad-email" in prompt
     assert "https://example.edu" in prompt
+    assert "annual tuition/fee/cost amounts" in prompt
+    assert "123456" in prompt
 
 
 def test_parse_judge_output_validates_schema() -> None:
@@ -65,7 +67,7 @@ def test_parse_judge_output_rejects_invalid_json() -> None:
         parse_judge_output("not-json")
 
 
-def test_judge_extraction_requires_gemini_key(monkeypatch) -> None:
+def test_judge_extraction_requires_provider_key_when_client_requires_key(monkeypatch) -> None:
     monkeypatch.setattr(
         "app.services.ai_judge.get_settings",
         lambda: type("Settings", (), {"has_gemini_api_key": lambda self: False})(),
@@ -78,7 +80,7 @@ def test_judge_extraction_requires_gemini_key(monkeypatch) -> None:
             client=client,
         )
 
-    assert "GEMINI_API_KEY" in str(exc_info.value)
+    assert "API key" in str(exc_info.value)
     assert "super-secret-gemini-key" not in str(exc_info.value)
     assert client.last_prompt is None
 

@@ -30,6 +30,18 @@ def configured_gemini_models() -> list[str]:
     return get_settings().gemini_models_list()
 
 
+def _resolve_models(*, model_name: str | None = None, allow_fallback: bool = True) -> list[str]:
+    if model_name and model_name.strip():
+        primary = model_name.strip()
+        if not allow_fallback:
+            return [primary]
+        return [primary, *[m for m in configured_gemini_models() if m != primary]]
+    if not allow_fallback:
+        models = configured_gemini_models()
+        return [models[0]] if models else []
+    return configured_gemini_models()
+
+
 class RotatingGeminiJSONClient:
     def __init__(self, *, api_keys: Sequence[str], models: Sequence[str]) -> None:
         self.api_keys = [key.strip() for key in api_keys if key and key.strip()]
@@ -91,5 +103,8 @@ class RotatingGeminiJSONClient:
         raise GeminiConfigurationError("GEMINI_API_KEY is not configured")
 
 
-def build_gemini_client() -> RotatingGeminiJSONClient:
-    return RotatingGeminiJSONClient(api_keys=configured_gemini_api_keys(), models=configured_gemini_models())
+def build_gemini_client(*, model_name: str | None = None, allow_fallback: bool = True) -> RotatingGeminiJSONClient:
+    return RotatingGeminiJSONClient(
+        api_keys=configured_gemini_api_keys(),
+        models=_resolve_models(model_name=model_name, allow_fallback=allow_fallback),
+    )

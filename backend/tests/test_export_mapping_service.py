@@ -20,7 +20,7 @@ def test_map_clean_payload_to_template_preserves_template_order() -> None:
     assert mapped == {
         "id": None,
         "name": "Example University",
-        "location": "Vietnam",
+        "location": None,
         "website": "https://example.edu",
     }
 
@@ -104,7 +104,7 @@ def test_map_clean_payload_to_template_keeps_existing_slug_value() -> None:
     }
 
 
-def test_map_clean_payload_to_template_sets_known_boolean_fields_false_when_missing() -> None:
+def test_map_clean_payload_to_template_keeps_evidence_dependent_booleans_null_when_missing() -> None:
     clean_payload = {
         "name": "Example University",
     }
@@ -118,8 +118,8 @@ def test_map_clean_payload_to_template_sets_known_boolean_fields_false_when_miss
 
     assert mapped == {
         "name": "Example University",
-        "student_loan_available": False,
-        "immigration_support": False,
+        "student_loan_available": None,
+        "immigration_support": None,
     }
 
 
@@ -198,6 +198,37 @@ def test_map_clean_payload_to_template_uses_none_for_unknown_missing_columns() -
     assert mapped == {
         "name": "Example University",
         "global_rank": None,
+    }
+
+
+def test_map_clean_payload_to_template_uses_country_code_location_default_when_source_has_address_text() -> None:
+    mapped = map_clean_payload_to_template(
+        {"name": "Example University", "location": "<span>Hanoi, Vietnam</span>"},
+        template_columns=[
+            {"name": "name", "order": 1},
+            {"name": "location", "order": 2},
+        ],
+        defaults={"location": 704},
+    )
+
+    assert mapped == {
+        "name": "Example University",
+        "location": 704,
+    }
+
+
+def test_map_clean_payload_to_template_keeps_numeric_location_code() -> None:
+    mapped = map_clean_payload_to_template(
+        {"name": "Example University", "location": "356"},
+        template_columns=[
+            {"name": "name", "order": 1},
+            {"name": "location", "order": 2},
+        ],
+    )
+
+    assert mapped == {
+        "name": "Example University",
+        "location": 356,
     }
 
 
@@ -908,7 +939,7 @@ def test_map_clean_payload_to_template_preserves_empty_list_values() -> None:
     }
 
 
-def test_map_clean_payload_to_template_preserves_empty_dict_values() -> None:
+def test_map_clean_payload_to_template_filters_empty_financials_dict_values() -> None:
     clean_payload = {
         "name": "Example University",
         "financials": {},
@@ -922,7 +953,7 @@ def test_map_clean_payload_to_template_preserves_empty_dict_values() -> None:
 
     assert mapped == {
         "name": "Example University",
-        "financials": {},
+        "financials": None,
     }
 
 
@@ -1042,7 +1073,7 @@ def test_map_clean_payload_to_template_preserves_existing_false_for_known_boolea
     }
 
 
-def test_map_clean_payload_to_template_applies_rule_based_false_for_housing_availability() -> None:
+def test_map_clean_payload_to_template_keeps_housing_availability_null_without_evidence() -> None:
     clean_payload = {
         "name": "Example University",
     }
@@ -1055,7 +1086,7 @@ def test_map_clean_payload_to_template_applies_rule_based_false_for_housing_avai
 
     assert mapped == {
         "name": "Example University",
-        "housing_availability": False,
+        "housing_availability": None,
     }
 
 
@@ -1172,9 +1203,9 @@ def test_map_clean_payload_to_template_handles_multiple_rule_based_boolean_field
     assert mapped == {
         "name": "Example University",
         "sponsored": False,
-        "student_loan_available": False,
-        "housing_availability": False,
-        "immigration_support": False,
+        "student_loan_available": None,
+        "housing_availability": None,
+        "immigration_support": None,
     }
 
 
@@ -1465,7 +1496,7 @@ def test_map_clean_payload_to_template_handles_default_empty_list_value() -> Non
     }
 
 
-def test_map_clean_payload_to_template_handles_default_empty_dict_value() -> None:
+def test_map_clean_payload_to_template_filters_default_empty_financials_dict_value() -> None:
     clean_payload = {
         "name": "Example University",
         "financials": None,
@@ -1483,7 +1514,7 @@ def test_map_clean_payload_to_template_handles_default_empty_dict_value() -> Non
 
     assert mapped == {
         "name": "Example University",
-        "financials": {},
+        "financials": None,
     }
 
 
@@ -2010,7 +2041,7 @@ def test_map_clean_payload_to_template_handles_none_for_known_boolean_and_no_def
 
     assert mapped == {
         "name": "Example University",
-        "immigration_support": False,
+        "immigration_support": None,
     }
 
 
@@ -2727,7 +2758,7 @@ def test_map_clean_payload_to_template_handles_list_default_value() -> None:
     }
 
 
-def test_map_clean_payload_to_template_handles_dict_default_value() -> None:
+def test_map_clean_payload_to_template_filters_dict_financials_default_without_amount() -> None:
     clean_payload = {
         "name": "Example University",
         "financials": None,
@@ -2745,7 +2776,7 @@ def test_map_clean_payload_to_template_handles_dict_default_value() -> None:
 
     assert mapped == {
         "name": "Example University",
-        "financials": {"tuition": "unknown"},
+        "financials": None,
     }
 
 
@@ -2917,7 +2948,7 @@ def test_map_clean_payload_to_template_handles_existing_empty_list_not_missing()
     }
 
 
-def test_map_clean_payload_to_template_handles_existing_empty_dict_not_missing() -> None:
+def test_map_clean_payload_to_template_filters_existing_empty_financials_dict() -> None:
     clean_payload = {
         "financials": {},
     }
@@ -2932,7 +2963,7 @@ def test_map_clean_payload_to_template_handles_existing_empty_dict_not_missing()
     )
 
     assert mapped == {
-        "financials": {},
+        "financials": None,
     }
 
 
@@ -2963,6 +2994,24 @@ def test_map_clean_payload_to_template_handles_existing_non_empty_dict() -> None
 
     assert mapped == {
         "financials": {"tuition": "$1000"},
+    }
+
+
+def test_map_clean_payload_to_template_filters_bad_financials_and_phone_values() -> None:
+    clean_payload = {
+        "financials": "Tuition fees vary by program and are published annually.",
+        "admissions_phone": "123456",
+    }
+    template_columns = [
+        {"name": "financials", "order": 1},
+        {"name": "admissions_phone", "order": 2},
+    ]
+
+    mapped = map_clean_payload_to_template(clean_payload, template_columns=template_columns)
+
+    assert mapped == {
+        "financials": None,
+        "admissions_phone": None,
     }
 
 
@@ -3092,9 +3141,9 @@ def test_map_clean_payload_to_template_handles_multiple_blank_known_boolean_fiel
 
     assert mapped == {
         "sponsored": False,
-        "student_loan_available": False,
-        "housing_availability": False,
-        "immigration_support": False,
+        "student_loan_available": None,
+        "housing_availability": None,
+        "immigration_support": None,
     }
 
 
@@ -3326,9 +3375,9 @@ def test_map_clean_payload_to_template_handles_empty_clean_payload_with_all_know
 
     assert mapped == {
         "sponsored": False,
-        "student_loan_available": False,
-        "housing_availability": False,
-        "immigration_support": False,
+        "student_loan_available": None,
+        "housing_availability": None,
+        "immigration_support": None,
     }
 
 

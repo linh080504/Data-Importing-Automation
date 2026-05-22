@@ -20,10 +20,6 @@ export function ExportAction({
   const primaryBlocker = exportReadiness.blockers[0];
 
   async function handleExport(format: "csv" | "xlsx") {
-    if (!isReadyToExport) {
-      setError(primaryBlocker ? `Resolve ${primaryBlocker.label.toLowerCase()} before exporting.` : "This job is not ready for export yet.");
-      return;
-    }
 
     setIsLoading(true);
     setError(null);
@@ -70,7 +66,7 @@ export function ExportAction({
         <button
           type="button"
           onClick={() => handleExport("csv")}
-          disabled={isLoading || !isReadyToExport}
+          disabled={isLoading}
           className="rounded-xl bg-sky-700 px-4 py-2 text-sm font-semibold text-white transition hover:bg-sky-800 disabled:cursor-not-allowed disabled:opacity-60"
         >
           {isLoading ? "Exporting..." : "Export CSV"}
@@ -78,7 +74,7 @@ export function ExportAction({
         <button
           type="button"
           onClick={() => handleExport("xlsx")}
-          disabled={isLoading || !isReadyToExport}
+          disabled={isLoading}
           className="rounded-xl border border-slate-300 bg-white px-4 py-2 text-sm font-semibold text-slate-700 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60"
         >
           {isLoading ? "Exporting..." : "Export XLSX"}

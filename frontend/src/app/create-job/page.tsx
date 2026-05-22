@@ -35,6 +35,8 @@ async function createJobAction(formData: FormData) {
     .filter(Boolean);
   const criticalFields = Array.from(new Set(selectedFocusFields.length > 0 ? selectedFocusFields : typedFocusFields));
   const aiAssist = formData.get("aiAssist") === "true";
+  const targetRecordCount = Math.min(1000, Math.max(1, Number.parseInt(String(formData.get("targetRecordCount") ?? "100"), 10) || 100));
+  const enableAiEnrichment = formData.get("enableAiEnrichment") === "true";
 
   const params = new URLSearchParams();
   if (country) {
@@ -52,6 +54,8 @@ async function createJobAction(formData: FormData) {
     params.set("criticalFields", criticalFields.join(","));
   }
   params.set("aiAssist", aiAssist ? "true" : "false");
+  params.set("targetRecordCount", String(targetRecordCount));
+  params.set("enableAiEnrichment", enableAiEnrichment ? "true" : "false");
 
   if (!country) {
     params.set("error", "Select a live country from the configured source catalog.");
@@ -83,9 +87,15 @@ async function createJobAction(formData: FormData) {
             prompt_text: discoveryPrompt,
             prompt_source: "manual",
             seed_sources: sourceIds,
+            target_record_count: targetRecordCount,
+            quality_mode: "high_confidence",
+            enable_ai_enrichment: enableAiEnrichment,
           }
         : {
             selected_source_ids: sourceIds,
+            target_record_count: targetRecordCount,
+            quality_mode: "high_confidence",
+            enable_ai_enrichment: enableAiEnrichment,
           },
     criticalFields,
     cleanTemplateId,
@@ -120,6 +130,8 @@ export default async function CreateJobPage({ searchParams }: { searchParams: Se
       ? `Find universities and colleges in ${selectedCountry}. Prioritize official and trustworthy sources. Return structured results including name, website, location, admissions, tuition, and quality signals when available.`
       : "Find universities and colleges. Prioritize official and trustworthy sources. Return structured results including name, website, location, admissions, tuition, and quality signals when available.");
   const aiAssist = readValue(resolvedSearchParams.aiAssist) !== "false";
+  const targetRecordCount = Number.parseInt(readValue(resolvedSearchParams.targetRecordCount) ?? "100", 10) || 100;
+  const enableAiEnrichment = readValue(resolvedSearchParams.enableAiEnrichment) !== "false";
 
   const [sources, templates, recommendedSources] = await Promise.all([
     selectedCountry ? getSources(selectedCountry) : Promise.resolve([]),
@@ -288,6 +300,33 @@ export default async function CreateJobPage({ searchParams }: { searchParams: Se
                 <input type="checkbox" name="aiAssist" value="true" defaultChecked={aiAssist} className="h-4 w-4 rounded border-slate-300" />
                 Enable AI assistance for focus field extraction
               </label>
+
+              <div className="grid gap-4 md:grid-cols-2">
+                <label className="space-y-2 text-sm">
+                  <span className="font-semibold text-slate-900">Quality target records</span>
+                  <input
+                    type="number"
+                    name="targetRecordCount"
+                    min={1}
+                    max={1000}
+                    defaultValue={targetRecordCount}
+                    className="w-full rounded-xl border border-slate-300 px-3 py-2 text-slate-900"
+                  />
+                  <span className="block text-xs leading-5 text-slate-500">
+                    Keeps the highest-scoring rows first. Use about 100 when you want quality over broad coverage.
+                  </span>
+                </label>
+
+                <label className="flex items-start gap-3 rounded-2xl border border-slate-200 bg-slate-50 p-4 text-sm text-slate-700">
+                  <input type="checkbox" name="enableAiEnrichment" value="true" defaultChecked={enableAiEnrichment} className="mt-1 h-4 w-4 rounded border-slate-300" />
+                  <span>
+                    <span className="block font-semibold text-slate-900">AI fill missing high-confidence fields</span>
+                    <span className="mt-1 block text-xs leading-5 text-slate-500">
+                      Values below confidence threshold stay blank/null instead of going straight to human review.
+                    </span>
+                  </span>
+                </label>
+              </div>
 
               <div className="rounded-2xl bg-sky-50 p-4 text-sm text-sky-900">
                 <p className="font-semibold">Direct processing starts on submit</p>

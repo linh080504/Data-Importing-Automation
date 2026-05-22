@@ -1,18 +1,75 @@
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
+from html import unescape
 
 from sqlalchemy.orm import Session
 
 from app.models.ai_extraction_log import AIExtractionLog
 from app.models.clean_record import CleanRecord
 from app.models.raw_record import RawRecord
+from app.services.country_location import coerce_location_code
+from app.services.validator import is_plausible_phone_number, looks_like_tuition_financials
 
 
 @dataclass
 class CleanDataResult:
     clean_record: CleanRecord
     created: bool
+
+
+TECHNICAL_CLEAN_FIELDS = {
+    "source",
+    "reference_url",
+    "source_href",
+    "source_id",
+    "source_name",
+    "source_snippet",
+    "source_url",
+    "sources",
+    "snippet",
+    "unique_key",
+    "url",
+    "wikipedia_article_url",
+}
+
+
+def _column_names(template_columns: list[dict[str, object]] | None) -> set[str]:
+    if not template_columns:
+        return set()
+    return {
+        str(column.get("name")).strip()
+        for column in template_columns
+        if column.get("name") and str(column.get("name")).strip()
+    }
+
+
+def _clean_html_text(value: object) -> str:
+    text = re.sub(r"<sup[^>]*>.*?</sup>", " ", str(value or ""), flags=re.IGNORECASE | re.DOTALL)
+    text = re.sub(r"<style[^>]*>.*?</style>", " ", text, flags=re.IGNORECASE | re.DOTALL)
+    text = re.sub(r"<script[^>]*>.*?</script>", " ", text, flags=re.IGNORECASE | re.DOTALL)
+    text = unescape(re.sub(r"<[^>]+>", " ", text))
+    return " ".join(text.split())
+
+
+def _clean_location(value: object) -> int | None:
+    return coerce_location_code(value)
+
+
+def _clean_field_value(field_name: str, value: object | None) -> object | None:
+    if value in (None, "", [], {}):
+        return None
+    if field_name == "location":
+        return _clean_location(value)
+    if field_name == "financials" and not looks_like_tuition_financials(value):
+        return None
+    if "phone" in field_name.lower() and not is_plausible_phone_number(value):
+        return None
+    if isinstance(value, str):
+        text = _clean_html_text(value)
+        return text or None
+    return value
 
 
 def _has_evidence(extracted_field: dict) -> bool:
@@ -50,26 +107,39 @@ def _raw_field_value(raw_payload: dict, field_name: str) -> object | None:
     return raw_payload.get(field_name)
 
 
-def _raw_pass_through_payload(raw_payload: dict | None) -> dict:
+def _raw_pass_through_payload(raw_payload: dict | None, *, allowed_fields: set[str] | None = None) -> dict:
     if not isinstance(raw_payload, dict):
         return {}
 
     payload: dict[str, object] = {}
     for field_name, value in raw_payload.items():
-        if field_name in {"sources", "_merge"} or field_name.startswith("_"):
+        if field_name in TECHNICAL_CLEAN_FIELDS or field_name in {"sources", "_merge"} or field_name.startswith("_"):
+            continue
+        if field_name.endswith("_source_url"):
+            continue
+        if allowed_fields is not None and field_name not in allowed_fields:
             continue
         if value in (None, "", [], {}):
             continue
-        payload[field_name] = _raw_field_value(raw_payload, field_name)
+        clean_value = _clean_field_value(field_name, _raw_field_value(raw_payload, field_name))
+        if clean_value is not None:
+            payload[field_name] = clean_value
     return payload
 
 
-def build_clean_payload(log: AIExtractionLog | object, *, raw_payload: dict | None = None) -> dict:
+def build_clean_payload(
+    log: AIExtractionLog | object,
+    *,
+    raw_payload: dict | None = None,
+    template_columns: list[dict[str, object]] | None = None,
+) -> dict:
     extractor_payload = getattr(log, "ai_1_payload", {}) or {}
     judge_payload = getattr(log, "ai_2_validation", {}) or {}
 
     extracted_fields = extractor_payload.get("critical_fields", {}) or {}
     fields_validation = (judge_payload.get("judge_output", {}) or {}).get("fields_validation", {}) or {}
+    template_fields = _column_names(template_columns)
+    allowed_fields = template_fields | set(extracted_fields) if template_fields else None
 
     clean_payload: dict[str, object] = {}
     for field_name, extracted_field in extracted_fields.items():
@@ -77,12 +147,15 @@ def build_clean_payload(log: AIExtractionLog | object, *, raw_payload: dict | No
             clean_payload[field_name] = None
             continue
         validation = fields_validation.get(field_name, {}) or {}
-        clean_payload[field_name] = _clean_value_for_field(
-            extracted_field,
-            validation if isinstance(validation, dict) else {},
+        clean_payload[field_name] = _clean_field_value(
+            field_name,
+            _clean_value_for_field(
+                extracted_field,
+                validation if isinstance(validation, dict) else {},
+            ),
         )
 
-    for field_name, value in _raw_pass_through_payload(raw_payload).items():
+    for field_name, value in _raw_pass_through_payload(raw_payload, allowed_fields=allowed_fields).items():
         clean_payload.setdefault(field_name, value)
 
     return clean_payload
@@ -106,6 +179,7 @@ def generate_clean_record(
     *,
     raw_record: RawRecord | object,
     ai_log: AIExtractionLog | object,
+    template_columns: list[dict[str, object]] | None = None,
 ) -> CleanDataResult:
     existing = (
         db.query(CleanRecord)
@@ -124,7 +198,11 @@ def generate_clean_record(
     clean_record.job_id = raw_record.job_id
     clean_record.raw_record_id = raw_record.id
     clean_record.unique_key = raw_record.unique_key
-    clean_record.clean_payload = build_clean_payload(ai_log, raw_payload=getattr(raw_record, "raw_payload", None))
+    clean_record.clean_payload = build_clean_payload(
+        ai_log,
+        raw_payload=getattr(raw_record, "raw_payload", None),
+        template_columns=template_columns,
+    )
     clean_record.quality_score = getattr(ai_log, "overall_confidence", None)
     clean_record.status = derive_clean_record_status(ai_log)
 

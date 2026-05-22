@@ -12,6 +12,8 @@ from urllib.parse import quote_plus, unquote, urljoin, urlparse
 import httpx
 
 from app.schemas.discovery import DiscoveryRow, DiscoverySourceBundle
+from app.services.country_location import coerce_location_code
+from app.services.validator import is_plausible_phone_number, looks_like_tuition_financials
 from app.services.wikidata_importer import fetch_wikidata_university_rows
 
 
@@ -21,6 +23,22 @@ class DirectRunError(RuntimeError):
 
 USER_AGENT = "beyond2-university-crawler/1.0"
 WIKIPEDIA_DOMAINS = ("wikipedia.org", "wikimedia.org", "wikidata.org")
+NON_SCHOOL_EXTERNAL_DOMAINS = (
+    "facebook.com",
+    "instagram.com",
+    "linkedin.com",
+    "twitter.com",
+    "x.com",
+    "youtube.com",
+    "tiktok.com",
+    "pinterest.com",
+    "reddit.com",
+    "google.com",
+    "wikipedia.org",
+    "wikidata.org",
+    "wikimedia.org",
+    "unirank.org",
+)
 
 INFOBOX_FIELD_ALIASES = {
     "location": ("location", "address", "city"),
@@ -40,18 +58,24 @@ OFFICIAL_LINK_PATTERNS = {
         "enrollment",
         "tuyen-sinh",
         "tuyensinh",
+        "tuyen sinh",
         "tuyển sinh",
         "xet-tuyen",
+        "xet tuyen",
     ),
     "financials_source_url": (
         "tuition",
+        "tuition fee",
+        "tuition fees",
         "fee",
         "fees",
+        "fee structure",
+        "fees-and-funding",
+        "fees and funding",
         "cost",
-        "scholarship",
         "hoc-phi",
+        "hoc phi",
         "học phí",
-        "finance",
     ),
     "campus_student_life_source_url": (
         "student-life",
@@ -60,6 +84,7 @@ OFFICIAL_LINK_PATTERNS = {
         "life",
         "students",
         "sinh-vien",
+        "sinh vien",
         "sinh viên",
     ),
     "housing_source_url": (
@@ -69,6 +94,7 @@ OFFICIAL_LINK_PATTERNS = {
         "accommodation",
         "ký túc",
         "ky-tuc",
+        "ky tuc",
     ),
     "international_source_url": (
         "international",
@@ -76,6 +102,7 @@ OFFICIAL_LINK_PATTERNS = {
         "immigration",
         "global",
         "quoc-te",
+        "quoc te",
         "quốc tế",
     ),
 }
@@ -205,6 +232,7 @@ def _match_key(value: object) -> str:
     text = "".join(char for char in text if not unicodedata.combining(char))
     text = text.replace("đ", "d")
     text = text.replace("viet nam", "vietnam")
+    text = text.replace("ha noi", "hanoi")
     text = re.sub(r"[^a-z0-9]+", " ", text)
     return " ".join(text.split())
 
@@ -338,6 +366,14 @@ def _is_external_url(url: str) -> bool:
     return not any(domain in netloc for domain in WIKIPEDIA_DOMAINS)
 
 
+def _is_school_website_url(url: str) -> bool:
+    parsed = urlparse(url)
+    if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+        return False
+    netloc = parsed.netloc.lower()
+    return not any(domain in netloc for domain in NON_SCHOOL_EXTERNAL_DOMAINS)
+
+
 def _external_url_from_href(href: str, *, base_url: str) -> str | None:
     if href.startswith("//"):
         href = f"https:{href}"
@@ -353,6 +389,98 @@ def _first_external_link(fragment: str, *, base_url: str) -> str | None:
     return None
 
 
+def _wikipedia_content_html(html: str) -> str:
+    parser_match = re.search(
+        r'<div[^>]+class="[^"]*\bmw-parser-output\b[^"]*"[^>]*>(.*?)(?:<div[^>]+class="[^"]*\bprintfooter\b|<div[^>]+id="catlinks"|</body>)',
+        html,
+        flags=re.IGNORECASE | re.DOTALL,
+    )
+    if parser_match:
+        return parser_match.group(1)
+    content_match = re.search(
+        r'<div[^>]+id="mw-content-text"[^>]*>(.*?)(?:<div[^>]+id="catlinks"|</body>)',
+        html,
+        flags=re.IGNORECASE | re.DOTALL,
+    )
+    return content_match.group(1) if content_match else html
+
+
+def _is_wikipedia_non_school_url(source_url: str) -> bool:
+    if any(token in source_url for token in ("/wiki/Special:", "/wiki/Help:", "/wiki/File:", "/wiki/Category:", "/wiki/Portal:", "/wiki/Talk:")):
+        return True
+    page_ref = source_url.rsplit("/wiki/", 1)[-1]
+    if any(token in page_ref for token in (":", "#", "Main_Page")):
+        return True
+    page_title = unquote(page_ref).replace("_", " ").lower()
+    return page_title.startswith(("list of universities", "lists of universities", "list of colleges", "lists of colleges"))
+
+
+def _clean_school_name(value: object) -> str:
+    text = _clean_html_text(value)
+    text = re.sub(r"\[[^\]]+\]", " ", text)
+    text = re.sub(r"\s+", " ", text)
+    return text.strip(" -;:,")
+
+
+def _clean_location_value(value: object) -> int | None:
+    return coerce_location_code(value)
+
+
+def _stable_fragment(value: object) -> str:
+    key = _match_key(value)
+    return "-".join(key.split())[:120] or "row"
+
+
+def _add_wikipedia_row(
+    rows_by_key: dict[str, dict[str, Any]],
+    *,
+    name: str,
+    country: str | None,
+    source_url: str,
+    reference_url: str,
+    location: str | None = None,
+    snippet: str | None = None,
+) -> None:
+    clean_name = _clean_school_name(name)
+    if len(clean_name) < 3:
+        return
+    lowered = clean_name.lower()
+    if any(term in lowered for term in ("edit", "citation", "contents", "references", "list of")):
+        return
+    if lowered in {"university", "university system", "national key university"}:
+        return
+    if not _looks_like_university_entry(clean_name, source_url):
+        return
+
+    key = _match_key(clean_name)
+    existing = rows_by_key.get(key)
+    if existing is not None:
+        if existing.get("source_url") == existing.get("reference_url") and source_url != reference_url:
+            existing["source_url"] = source_url
+            existing["source_href"] = source_url
+        if location and not existing.get("location"):
+            clean_location = _clean_location_value(location)
+            if clean_location:
+                existing["location"] = clean_location
+        if snippet and not existing.get("snippet"):
+            existing["snippet"] = snippet
+        return
+
+    rows_by_key[key] = {
+        "name": clean_name,
+        "country": country,
+        "source_url": source_url,
+        "reference_url": reference_url,
+        "source_href": source_url,
+    }
+    if location:
+        clean_location = _clean_location_value(location)
+        if clean_location:
+            rows_by_key[key]["location"] = clean_location
+    if snippet:
+        rows_by_key[key]["snippet"] = _clean_school_name(snippet)
+
+
 def _extract_wikipedia_country_list_url(html: str, *, country: str, index_url: str, config: dict[str, Any]) -> str:
     country_name = _normalize_country_alias(country, config)
     country_key = _match_key(country_name)
@@ -360,8 +488,7 @@ def _extract_wikipedia_country_list_url(html: str, *, country: str, index_url: s
         raise DirectRunError("Country is required for Wikipedia country-index source")
 
     base_url = _wikipedia_base_url(index_url)
-    main_content_match = re.search(r'<div[^>]+id="mw-content-text"[^>]*>(.*?)</div>', html, flags=re.IGNORECASE | re.DOTALL)
-    main_content = main_content_match.group(1) if main_content_match else html
+    main_content = _wikipedia_content_html(html)
 
     for href, inner in re.findall(r'<a[^>]+href="([^"]+)"[^>]*>(.*?)</a>', main_content, flags=re.IGNORECASE | re.DOTALL):
         label = " ".join(unescape(re.sub(r"<[^>]+>", " ", inner)).split())
@@ -390,47 +517,217 @@ def _extract_unirank_rows(html: str, *, country: str | None) -> list[dict[str, A
     return rows
 
 
-def _extract_wikipedia_list_rows(html: str, *, country: str | None) -> list[dict[str, Any]]:
-    rows: list[dict[str, Any]] = []
-    seen: set[str] = set()
-    main_content_match = re.search(r'<div[^>]+id="mw-content-text"[^>]*>(.*?)</div>', html, flags=re.IGNORECASE | re.DOTALL)
-    main_content = main_content_match.group(1) if main_content_match else html
-    # try to detect the wikipedia domain used on the page (en.wikipedia.org, vi.wikipedia.org, etc.)
-    domain_match = re.search(r'https?://[a-z0-9.-]*wikipedia.org', html, flags=re.IGNORECASE)
-    wiki_base = domain_match.group(0) if domain_match else "https://en.wikipedia.org"
+def _extract_meta_description(html: str) -> str | None:
+    match = re.search(
+        r'<meta[^>]+name=["\']description["\'][^>]+content=["\']([^"\']+)["\']',
+        html,
+        flags=re.IGNORECASE | re.DOTALL,
+    )
+    if not match:
+        match = re.search(
+            r'<meta[^>]+content=["\']([^"\']+)["\'][^>]+name=["\']description["\']',
+            html,
+            flags=re.IGNORECASE | re.DOTALL,
+        )
+    if not match:
+        return None
+    text = _clean_html_text(match.group(1))
+    return text if len(text) >= 40 else None
+
+
+def _first_school_external_link(html: str, *, base_url: str) -> str | None:
+    labeled_candidates: list[str] = []
+    fallback_candidates: list[str] = []
+    for href, label_html in re.findall(r'<a[^>]+href="([^"]+)"[^>]*>(.*?)</a>', html, flags=re.IGNORECASE | re.DOTALL):
+        url = urljoin(base_url, unescape(href))
+        if not _is_school_website_url(url):
+            continue
+        label = _clean_html_text(label_html).lower()
+        if "website" in label or "official" in label:
+            labeled_candidates.append(url)
+        else:
+            fallback_candidates.append(url)
+    return (labeled_candidates or fallback_candidates or [None])[0]
+
+
+def _extract_unirank_detail_details(html: str, *, detail_url: str, country: str | None) -> dict[str, Any]:
+    details: dict[str, Any] = {
+        "source_url": detail_url,
+        "reference_url": detail_url,
+        "source_href": detail_url,
+        "country": country,
+    }
+
+    title_match = re.search(r"<h1[^>]*>(.*?)</h1>", html, flags=re.IGNORECASE | re.DOTALL)
+    if title_match:
+        details["name"] = _clean_school_name(title_match.group(1))
+
+    description = _extract_meta_description(html) or _extract_first_article_paragraph(html)
+    if description:
+        details["description"] = description
+
+    website = _first_school_external_link(html, base_url=detail_url)
+    if website:
+        details["website"] = website
+
+    text = _clean_html_text(html)
+    location_match = re.search(r"(?:address|location|city)\s*[:\-]\s*([^|]{4,180})", text, flags=re.IGNORECASE)
+    if location_match:
+        location = _clean_location_value(location_match.group(1))
+        if location:
+            details["location"] = location
+
+    snippet_parts = [str(details.get("name") or ""), str(details.get("description") or ""), str(details.get("location") or "")]
+    details["snippet"] = " | ".join(part for part in snippet_parts if part)
+    return details
+
+
+def _extract_wikipedia_list_rows(html: str, *, country: str | None, list_url: str | None = None) -> list[dict[str, Any]]:
+    rows_by_key: dict[str, dict[str, Any]] = {}
+    main_content = _wikipedia_content_html(html)
+    domain_match = re.search(r"https?://[a-z0-9.-]*wikipedia.org", html, flags=re.IGNORECASE)
+    base_candidate = list_url or (domain_match.group(0) if domain_match else "https://en.wikipedia.org")
+    wiki_base = _wikipedia_base_url(base_candidate)
+    reference_url = list_url or wiki_base
+
     for href, inner in re.findall(r'<a[^>]+href="([^"]+)"[^>]*>(.*?)</a>', main_content, flags=re.IGNORECASE | re.DOTALL):
         source_url = _wikipedia_article_url(href, base_url=wiki_base)
-        if not source_url:
+        if not source_url or _is_wikipedia_non_school_url(source_url):
             continue
-        if any(token in source_url for token in ("/wiki/Special:", "/wiki/Help:", "/wiki/File:", "/wiki/Category:", "/wiki/Portal:")):
-            continue
-        page_ref = source_url.rsplit("/wiki/", 1)[-1]
-        if any(token in page_ref for token in (":", "#", "Main_Page")):
-            continue
-        page_title = unquote(page_ref).replace("_", " ").lower()
-        if page_title.startswith(("list of universities", "lists of universities", "list of colleges", "lists of colleges")):
-            continue
-        name = unescape(re.sub(r"<[^>]+>", " ", inner))
-        name = " ".join(name.split())
-        # allow shorter names (universities often have short names) but skip trivial tokens
-        if len(name) < 3:
-            continue
-        lowered = name.lower()
-        if any(term in lowered for term in ("edit", "citation", "contents", "references", "list of")):
-            continue
-        if lowered in {"university", "university system", "national key university"}:
-            continue
-        if not _looks_like_university_entry(name, source_url):
-            continue
-        if name in seen:
-            continue
-        seen.add(name)
-        rows.append({"name": name, "country": country, "source_url": source_url, "reference_url": source_url, "source_href": source_url})
+        name = _clean_school_name(inner)
+        _add_wikipedia_row(
+            rows_by_key,
+            name=name,
+            country=country,
+            source_url=source_url,
+            reference_url=reference_url,
+        )
+
+    for row in _extract_wikipedia_table_rows(main_content, country=country, base_url=wiki_base, reference_url=reference_url):
+        _add_wikipedia_row(
+            rows_by_key,
+            name=str(row.get("name") or ""),
+            country=country,
+            source_url=str(row.get("source_url") or reference_url),
+            reference_url=reference_url,
+            location=str(row.get("location") or "") or None,
+            snippet=str(row.get("snippet") or "") or None,
+        )
+
+    return list(rows_by_key.values())
+
+
+def _extract_wikipedia_table_rows(
+    html: str,
+    *,
+    country: str | None,
+    base_url: str,
+    reference_url: str,
+) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    for table_html in re.findall(r"<table\b[^>]*>(.*?)</table>", html, flags=re.IGNORECASE | re.DOTALL):
+        headers: list[str] = []
+        for row_html in re.findall(r"<tr\b[^>]*>(.*?)</tr>", table_html, flags=re.IGNORECASE | re.DOTALL):
+            cells = re.findall(r"<(t[dh])\b[^>]*>(.*?)</t[dh]>", row_html, flags=re.IGNORECASE | re.DOTALL)
+            if not cells:
+                continue
+            cell_values = [_clean_school_name(cell_html) for _tag, cell_html in cells]
+            if all(tag.lower() == "th" for tag, _cell_html in cells) or _looks_like_header_row(cell_values):
+                headers = [_match_key(value) for value in cell_values]
+                continue
+            row = _wikipedia_table_row_from_cells(cells, headers=headers, country=country, base_url=base_url, reference_url=reference_url)
+            if row:
+                rows.append(row)
     return rows
 
 
+def _looks_like_header_row(values: list[str]) -> bool:
+    header_text = " ".join(_match_key(value) for value in values)
+    return bool(header_text) and any(token in header_text for token in ("english name", "vietnamese name", "abbreviation", "location", "institution", "school"))
+
+
+def _wikipedia_cell_article(cell_html: str, *, base_url: str) -> tuple[str, str | None]:
+    best_name = ""
+    best_url: str | None = None
+    for href, inner in re.findall(r'<a[^>]+href="([^"]+)"[^>]*>(.*?)</a>', cell_html, flags=re.IGNORECASE | re.DOTALL):
+        source_url = _wikipedia_article_url(unescape(href), base_url=base_url)
+        if not source_url or _is_wikipedia_non_school_url(source_url):
+            continue
+        name = _clean_school_name(inner)
+        if _looks_like_university_entry(name, source_url):
+            return name, source_url
+        if not best_name:
+            best_name = name
+            best_url = source_url
+    return best_name, best_url
+
+
+def _cell_candidate_score(name: str, source_url: str | None, header: str) -> int:
+    if not name or not _looks_like_university_entry(name, source_url or ""):
+        return -1
+    header_key = _match_key(header)
+    if any(token in header_key for token in ("location", "city", "province", "abbreviation", "vietnamese")):
+        return -1
+    score = 10
+    if source_url:
+        score += 20
+    if any(token in header_key for token in ("english name", "institution", "university system", "member", "school", "name")):
+        score += 20
+    name_key = _match_key(name)
+    if any(term in name_key for term in ("university", "academy", "institute", "college", "polytechnic", "conservatory")):
+        score += 10
+    if name.lower().startswith(("faculty of ", "department of ")):
+        score -= 25
+    return score
+
+
+def _wikipedia_table_row_from_cells(
+    cells: list[tuple[str, str]],
+    *,
+    headers: list[str],
+    country: str | None,
+    base_url: str,
+    reference_url: str,
+) -> dict[str, Any] | None:
+    best: tuple[int, str, str | None] | None = None
+    location: str | None = None
+    snippets: list[str] = []
+
+    for index, (_tag, cell_html) in enumerate(cells):
+        header = headers[index] if index < len(headers) else ""
+        text = _clean_school_name(cell_html)
+        if not text:
+            continue
+        if any(token in header for token in ("location", "city", "province")):
+            location = _clean_location_value(text)
+            continue
+        if re.fullmatch(r"\d+\.?", text):
+            continue
+        snippets.append(text)
+        anchor_name, source_url = _wikipedia_cell_article(cell_html, base_url=base_url)
+        candidate_name = anchor_name or text
+        score = _cell_candidate_score(candidate_name, source_url, header)
+        if best is None or score > best[0]:
+            best = (score, candidate_name, source_url)
+
+    if best is None or best[0] < 0:
+        return None
+
+    name = best[1]
+    source_url = best[2] or f"{reference_url}#{_stable_fragment(name)}"
+    return {
+        "name": name,
+        "country": country,
+        "location": location,
+        "source_url": source_url,
+        "reference_url": reference_url,
+        "source_href": source_url,
+        "snippet": " | ".join(snippets[:5]),
+    }
+
+
 def _looks_like_university_entry(name: str, source_url: str) -> bool:
-    haystack = f"{name} {source_url}".lower().replace("_", " ")
+    haystack = _match_key(f"{name} {source_url}".replace("_", " "))
     school_terms = (
         "university",
         "universities",
@@ -440,6 +737,8 @@ def _looks_like_university_entry(name: str, source_url: str) -> bool:
         "school",
         "conservatory",
         "polytechnic",
+        "hoc vien",
+        "dai hoc",
     )
     return any(term in haystack for term in school_terms)
 
@@ -518,6 +817,11 @@ def _extract_wikipedia_article_details(html: str, *, article_url: str, country: 
             elif value and re.match(r"https?://", value):
                 details["website"] = value
             continue
+        if field_name == "location":
+            clean_location = _clean_location_value(value)
+            if clean_location:
+                details["location"] = clean_location
+            continue
         if value:
             details[field_name] = value
 
@@ -545,10 +849,11 @@ def _extract_links_by_patterns(html: str, *, page_url: str) -> dict[str, str]:
         if not _is_external_url(url):
             continue
         haystack = f"{_clean_html_text(label_html)} {url}".lower()
+        haystack_key = _match_key(haystack)
         for field_name, patterns in OFFICIAL_LINK_PATTERNS.items():
             if field_name in matches:
                 continue
-            if any(pattern.lower() in haystack for pattern in patterns):
+            if any(pattern.lower() in haystack or _match_key(pattern) in haystack_key for pattern in patterns):
                 matches[field_name] = url
     return matches
 
@@ -558,18 +863,123 @@ def _first_email(html: str) -> str | None:
     return match.group(0) if match else None
 
 
+PHONE_CONTEXT_PATTERNS = (
+    "phone",
+    "telephone",
+    "tel",
+    "hotline",
+    "contact",
+    "admission",
+    "admissions",
+    "tuyen sinh",
+    "tuyensinh",
+    "dien thoai",
+    "điện thoại",
+)
+
+FINANCIAL_CONTEXT_PATTERNS = (
+    "tuition",
+    "tuition fee",
+    "tuition fees",
+    "fee",
+    "fees",
+    "fee structure",
+    "cost of attendance",
+    "hoc phi",
+    "học phí",
+    "le phi",
+    "lệ phí",
+)
+
+
+def _normalize_phone_candidate(value: object) -> str | None:
+    text = unescape(str(value or ""))
+    text = re.sub(r"^\s*tel:\s*", "", text, flags=re.IGNORECASE)
+    text = re.sub(r"(?:ext|extension|may le|máy lẻ)\s*[:.]?\s*\d+\b", "", text, flags=re.IGNORECASE)
+    match = re.search(r"\+?\d[\d\s().-]{6,}\d", text)
+    if not match:
+        return None
+    candidate = " ".join(match.group(0).split())
+    return candidate if is_plausible_phone_number(candidate) else None
+
+
 def _first_phone(html: str) -> str | None:
-    match = re.search(r"(?:\+?\d[\d\s().-]{7,}\d)", _clean_html_text(html))
-    return " ".join(match.group(0).split()) if match else None
+    for tel_href in re.findall(r'href=["\']\s*tel:([^"\']+)["\']', html, flags=re.IGNORECASE):
+        candidate = _normalize_phone_candidate(tel_href)
+        if candidate:
+            return candidate
+
+    text = _clean_html_text(html)
+    for match in re.finditer(r"\+?\d[\d\s().-]{6,}\d", text):
+        start = max(match.start() - 90, 0)
+        end = min(match.end() + 90, len(text))
+        context = text[start:end].lower()
+        context_key = _match_key(context)
+        if not any(pattern in context or _match_key(pattern) in context_key for pattern in PHONE_CONTEXT_PATTERNS):
+            continue
+        candidate = _normalize_phone_candidate(match.group(0))
+        if candidate:
+            return candidate
+    return None
+
+
+def _financial_context_matches(text: str) -> bool:
+    lower = text.lower()
+    match_key = _match_key(text)
+    return any(pattern in lower or _match_key(pattern) in match_key for pattern in FINANCIAL_CONTEXT_PATTERNS)
+
+
+def _text_segments(html: str) -> list[str]:
+    segments: list[str] = []
+    for tag in ("tr", "p", "li"):
+        for chunk in re.findall(fr"<{tag}[^>]*>(.*?)</{tag}>", html, flags=re.IGNORECASE | re.DOTALL):
+            text = _clean_html_text(chunk)
+            if text:
+                segments.append(text)
+    whole_text = _clean_html_text(html)
+    for sentence in re.split(r"(?<=[.!?])\s+|\s+[|•]\s+", whole_text):
+        sentence = sentence.strip()
+        if sentence:
+            segments.append(sentence)
+    return segments
+
+
+def _trim_financial_segment(text: str) -> str:
+    compact = " ".join(text.split())
+    if len(compact) <= 260:
+        return compact
+    lower = compact.lower()
+    indexes = [lower.find(pattern) for pattern in FINANCIAL_CONTEXT_PATTERNS if lower.find(pattern) >= 0]
+    index = min(indexes) if indexes else 0
+    start = max(index - 80, 0)
+    end = min(index + 220, len(compact))
+    return compact[start:end].strip(" ;,.-")
+
+
+def _extract_financials_value(html: str) -> str | None:
+    for segment in _text_segments(html):
+        if not _financial_context_matches(segment):
+            continue
+        candidate = _trim_financial_segment(segment)
+        if looks_like_tuition_financials(candidate):
+            return candidate
+    return None
 
 
 def _snippet_around(html: str, patterns: tuple[str, ...]) -> str | None:
     text = _clean_html_text(html)
     lower = text.lower()
+    normalized = _match_key(text)
     for pattern in patterns:
         index = lower.find(pattern.lower())
         if index < 0:
-            continue
+            normalized_pattern = _match_key(pattern)
+            normalized_index = normalized.find(normalized_pattern)
+            if normalized_index < 0:
+                continue
+            words = text.split()
+            start_word = max(normalized[:normalized_index].count(" ") - 25, 0)
+            return " ".join(words[start_word:start_word + 80]).strip()
         start = max(index - 180, 0)
         end = min(index + 420, len(text))
         return text[start:end].strip()
@@ -585,19 +995,42 @@ def _enrich_with_official_site(row: dict[str, Any], *, referer: str | None = Non
     except Exception:
         return
 
-    row.update({key: value for key, value in _extract_links_by_patterns(html, page_url=website).items() if value})
-    email = _first_email(html)
+    related_links = {key: value for key, value in _extract_links_by_patterns(html, page_url=website).items() if value}
+    row.update(related_links)
+
+    page_html_by_field: dict[str, str] = {"homepage": html}
+    for link_field, link_url in list(related_links.items())[:6]:
+        if not isinstance(link_url, str) or not link_url.strip():
+            continue
+        try:
+            page_html_by_field[link_field] = _request_official_html(link_url.strip(), referer=website.strip())
+        except Exception:
+            continue
+
+    admissions_html = page_html_by_field.get("admissions_page_link", html)
+    financials_html = page_html_by_field.get("financials_source_url", html)
+    campus_life_html = page_html_by_field.get("campus_student_life_source_url", html)
+    housing_html = page_html_by_field.get("housing_source_url", html)
+    international_html = page_html_by_field.get("international_source_url", html)
+
+    email = _first_email(admissions_html) or _first_email(html)
     if email and not row.get("admissions_contact"):
         row["admissions_contact"] = email
-    phone = _first_phone(html)
+    phone = _first_phone(admissions_html) or _first_phone(html)
     if phone and not row.get("admissions_phone"):
         row["admissions_phone"] = phone
-    financials = _snippet_around(html, OFFICIAL_LINK_PATTERNS["financials_source_url"])
+    financials = _extract_financials_value(financials_html)
     if financials and not row.get("financials"):
         row["financials"] = financials
-    student_life = _snippet_around(html, OFFICIAL_LINK_PATTERNS["campus_student_life_source_url"])
+    student_life = _snippet_around(campus_life_html, OFFICIAL_LINK_PATTERNS["campus_student_life_source_url"])
     if student_life and not row.get("campus_student_life"):
         row["campus_student_life"] = student_life
+    housing = _snippet_around(housing_html, OFFICIAL_LINK_PATTERNS["housing_source_url"])
+    if housing and not row.get("housing_availability"):
+        row["housing_availability"] = True
+    international = _snippet_around(international_html, OFFICIAL_LINK_PATTERNS["international_source_url"])
+    if international and not row.get("immigration_support"):
+        row["immigration_support"] = True
 
 
 def _positive_int(value: object, default: int) -> int:
@@ -640,6 +1073,8 @@ def _enrich_wikipedia_article_row(
     if not isinstance(article_url, str) or not article_url.strip():
         return index, enriched
     article_url = article_url.strip()
+    if _is_wikipedia_non_school_url(article_url):
+        return index, enriched
     try:
         html = _request_public_html("GET", article_url, parser_variant="wikipedia_article_html", referer=referer)
         details = _extract_wikipedia_article_details(html, article_url=article_url, country=country)
@@ -657,6 +1092,93 @@ def _enrich_official_site_row(index: int, row: dict[str, Any], *, referer: str |
     enriched = dict(row)
     _enrich_with_official_site(enriched, referer=referer)
     return index, enriched
+
+
+def _enrich_unirank_detail_row(
+    index: int,
+    row: dict[str, Any],
+    *,
+    country: str | None,
+    referer: str | None,
+) -> tuple[int, dict[str, Any]]:
+    enriched = dict(row)
+    detail_url = row.get("source_url")
+    if not isinstance(detail_url, str) or not detail_url.strip():
+        return index, enriched
+    try:
+        html = _request_public_html("GET", detail_url.strip(), parser_variant="ranking_detail_html", referer=referer)
+        details = _extract_unirank_detail_details(html, detail_url=detail_url.strip(), country=country)
+        enriched = {**details, **{key: value for key, value in enriched.items() if value not in (None, "", [], {})}}
+        if details.get("website") and not row.get("website"):
+            enriched["website"] = details["website"]
+        if details.get("description") and not row.get("description"):
+            enriched["description"] = details["description"]
+        if details.get("location") and not row.get("location"):
+            enriched["location"] = details["location"]
+    except Exception:
+        pass
+    return index, enriched
+
+
+def _enrich_unirank_rows(
+    rows: list[dict[str, Any]],
+    *,
+    country: str | None,
+    config: dict[str, Any],
+    referer: str | None,
+    focus_fields: set[str],
+) -> list[dict[str, Any]]:
+    if not config.get("enrich_detail_pages") and not config.get("enrich_official_site"):
+        return rows
+
+    max_detail_pages = min(_positive_int(config.get("max_detail_pages"), len(rows)), len(rows))
+    detail_workers = min(_positive_int(config.get("detail_page_workers"), 6), max_detail_pages or 1)
+    enriched_rows: list[dict[str, Any]] = [dict(row) for row in rows]
+
+    if max_detail_pages > 0 and config.get("enrich_detail_pages"):
+        detail_candidates = [(index, rows[index]) for index in range(max_detail_pages)]
+        if detail_workers <= 1 or len(detail_candidates) <= 1:
+            for index, row in detail_candidates:
+                result_index, enriched = _enrich_unirank_detail_row(index, row, country=country, referer=referer)
+                enriched_rows[result_index] = enriched
+        else:
+            with ThreadPoolExecutor(max_workers=detail_workers) as executor:
+                futures = [
+                    executor.submit(_enrich_unirank_detail_row, index, row, country=country, referer=referer)
+                    for index, row in detail_candidates
+                ]
+                for future in as_completed(futures):
+                    result_index, enriched = future.result()
+                    enriched_rows[result_index] = enriched
+
+    if not _should_enrich_official_sites(config, focus_fields):
+        return enriched_rows
+
+    max_official_sites = _positive_int(config.get("max_official_sites"), 0)
+    if max_official_sites <= 0:
+        return enriched_rows
+
+    official_candidates = [
+        (index, row)
+        for index, row in enumerate(enriched_rows)
+        if isinstance(row.get("website"), str) and str(row.get("website")).strip()
+    ][:max_official_sites]
+    official_workers = min(_positive_int(config.get("official_site_workers"), 4), len(official_candidates) or 1)
+    if official_workers <= 1 or len(official_candidates) <= 1:
+        for index, row in official_candidates:
+            result_index, enriched = _enrich_official_site_row(index, row, referer=str(row.get("source_url") or referer or ""))
+            enriched_rows[result_index] = enriched
+        return enriched_rows
+
+    with ThreadPoolExecutor(max_workers=official_workers) as executor:
+        futures = [
+            executor.submit(_enrich_official_site_row, index, row, referer=str(row.get("source_url") or referer or ""))
+            for index, row in official_candidates
+        ]
+        for future in as_completed(futures):
+            result_index, enriched = future.result()
+            enriched_rows[result_index] = enriched
+    return enriched_rows
 
 
 def _enrich_wikipedia_rows(
@@ -859,7 +1381,7 @@ def fetch_discovery_bundle_from_source(
                 raise DirectRunError("Country is required for Wikipedia country-index source")
             country_list_url = _extract_wikipedia_country_list_url(html, country=country, index_url=url, config=config)
             html = _request_public_html(str(config.get("method", "GET")).upper(), country_list_url, parser_variant="wikipedia_list_html", referer=url)
-            rows = _extract_wikipedia_list_rows(html, country=country)
+            rows = _extract_wikipedia_list_rows(html, country=country, list_url=country_list_url)
             rows = _enrich_wikipedia_rows(rows, country=country, config=config, referer=country_list_url, focus_fields=focus_fields)
             config = {
                 **config,
@@ -877,7 +1399,13 @@ def fetch_discovery_bundle_from_source(
                     "admissions_contact": "admissions_contact",
                     "admissions_phone": "admissions_phone",
                     "financials": "financials",
+                    "financials_source_url": "financials_source_url",
                     "campus_student_life": "campus_student_life",
+                    "campus_student_life_source_url": "campus_student_life_source_url",
+                    "housing_availability": "housing_availability",
+                    "housing_source_url": "housing_source_url",
+                    "immigration_support": "immigration_support",
+                    "international_source_url": "international_source_url",
                     "number_of_students": "number_of_students",
                     "student_to_faculty_ratio": "student_to_faculty_ratio",
                     "international_student_ratio": "international_student_ratio",
@@ -892,15 +1420,44 @@ def fetch_discovery_bundle_from_source(
             return _bundle_from_rows(source_id=source_id, source_name=source_name, rows=rows, config=config)
         if parser_variant == "ranking_html":
             rows = _extract_unirank_rows(html, country=country)
+            normalized_focus_fields = _normalized_focus_fields(focus_fields)
+            rows = _enrich_unirank_rows(
+                rows,
+                country=country,
+                config=config,
+                referer=url,
+                focus_fields=normalized_focus_fields,
+            )
             config = {
                 **config,
-                "field_map": {"name": "name", "country": "country", "source_url": "source_url", "reference_url": "reference_url"},
+                "field_map": {
+                    "name": "name",
+                    "country": "country",
+                    "location": "location",
+                    "description": "description",
+                    "website": "website",
+                    "source_url": "source_url",
+                    "reference_url": "reference_url",
+                    "source_href": "source_href",
+                    "admissions_page_link": "admissions_page_link",
+                    "admissions_contact": "admissions_contact",
+                    "admissions_phone": "admissions_phone",
+                    "financials": "financials",
+                    "financials_source_url": "financials_source_url",
+                    "campus_student_life": "campus_student_life",
+                    "campus_student_life_source_url": "campus_student_life_source_url",
+                    "housing_availability": "housing_availability",
+                    "housing_source_url": "housing_source_url",
+                    "immigration_support": "immigration_support",
+                    "international_source_url": "international_source_url",
+                    "snippet": "snippet",
+                },
                 "unique_key_field": "source_href",
-                "text_field": "name",
+                "text_field": "snippet",
             }
             return _bundle_from_rows(source_id=source_id, source_name=source_name, rows=rows, config=config)
         if parser_variant == "wikipedia_list_html":
-            rows = _extract_wikipedia_list_rows(html, country=country)
+            rows = _extract_wikipedia_list_rows(html, country=country, list_url=url)
             rows = _enrich_wikipedia_rows(rows, country=country, config=config, referer=url, focus_fields=focus_fields)
             config = {
                 **config,
@@ -917,7 +1474,13 @@ def fetch_discovery_bundle_from_source(
                     "admissions_contact": "admissions_contact",
                     "admissions_phone": "admissions_phone",
                     "financials": "financials",
+                    "financials_source_url": "financials_source_url",
                     "campus_student_life": "campus_student_life",
+                    "campus_student_life_source_url": "campus_student_life_source_url",
+                    "housing_availability": "housing_availability",
+                    "housing_source_url": "housing_source_url",
+                    "immigration_support": "immigration_support",
+                    "international_source_url": "international_source_url",
                     "number_of_students": "number_of_students",
                     "student_to_faculty_ratio": "student_to_faculty_ratio",
                     "international_student_ratio": "international_student_ratio",

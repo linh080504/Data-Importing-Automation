@@ -4,7 +4,7 @@ from dataclasses import dataclass
 
 from app.schemas.ai_output import AIJudgeOutput
 
-AUTO_APPROVE_THRESHOLD = 85
+AUTO_APPROVE_THRESHOLD = 80
 REQUIRED_FIELD_MIN_CONFIDENCE = 80
 
 

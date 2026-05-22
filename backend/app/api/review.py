@@ -27,11 +27,18 @@ TECHNICAL_FIELD_NAMES = {
     "source_href",
     "source_id",
     "source_name",
+    "source_snippet",
     "source_url",
     "sources",
+    "snippet",
     "unique_key",
     "url",
     "uuid",
+    "wikipedia_article_url",
+    "financials_source_url",
+    "campus_student_life_source_url",
+    "housing_source_url",
+    "international_source_url",
 }
 
 DISPLAY_FIELD_PRIORITY = {
@@ -110,7 +117,7 @@ def _build_fields_to_review(log: AIExtractionLog) -> list[FieldToReview]:
     for field_name, validation in field_validations.items():
         is_correct = validation.get("is_correct", False)
         confidence = validation.get("confidence", 0)
-        if is_correct and confidence >= 85 and not validation.get("merge_conflicts"):
+        if is_correct and confidence >= 80 and not validation.get("merge_conflicts"):
             continue
 
         extracted = extracted_fields.get(field_name, {})

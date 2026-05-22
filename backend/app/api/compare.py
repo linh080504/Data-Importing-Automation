@@ -7,9 +7,12 @@ from sqlalchemy.orm import Session
 
 from app.db.session import get_db
 from app.models.clean_record import CleanRecord
+from app.models.clean_template import CleanTemplate
 from app.models.crawl_job import CrawlJob
 from app.models.raw_record import RawRecord
 from app.schemas.compare import CompareField, CompareRecord, CompareResponse
+from app.services.export_mapping import map_clean_payload_to_template
+from app.services.template_defaults import defaults_for_job
 
 router = APIRouter(tags=["compare"])
 
@@ -46,11 +49,42 @@ def _is_country_list_artifact(raw_payload: dict[str, Any]) -> bool:
     return not any(term in name.lower() for term in SCHOOL_ENTITY_TERMS)
 
 
+def _template_field_order(template_columns: list[dict[str, Any]]) -> list[str]:
+    ordered = sorted(
+        template_columns,
+        key=lambda column: column.get("order") if isinstance(column.get("order"), int) else 0,
+    )
+    return [str(column.get("name") or "").strip() for column in ordered if str(column.get("name") or "").strip()]
+
+
+def _compare_field_order(
+    *,
+    raw_payload: dict[str, Any],
+    clean_payload: dict[str, object | None],
+    template_fields: list[str],
+) -> list[str]:
+    excluded = {"sources", "_merge"}
+    fields: list[str] = []
+    seen: set[str] = set()
+    for field_name in [*template_fields, *sorted(set(raw_payload) | set(clean_payload))]:
+        if field_name in excluded or field_name in seen:
+            continue
+        seen.add(field_name)
+        fields.append(field_name)
+    return fields
+
+
 @router.get("/crawl-jobs/{job_id}/compare", response_model=CompareResponse)
 def get_compare(job_id: str, db: Session = Depends(get_db)) -> CompareResponse:
     job = db.query(CrawlJob).filter(CrawlJob.id == job_id).one_or_none()
     if job is None:
         return CompareResponse(total=0, items=[])
+
+    template_id = getattr(job, "clean_template_id", None)
+    template = db.query(CleanTemplate).filter(CleanTemplate.id == template_id).one_or_none() if template_id else None
+    template_columns = template.columns if template is not None else []
+    template_fields = _template_field_order(template_columns)
+    defaults = defaults_for_job(job)
 
     raw_records = db.query(RawRecord).filter(RawRecord.job_id == job_id).all()
     clean_records = db.query(CleanRecord).filter(CleanRecord.job_id == job_id).all()
@@ -66,10 +100,17 @@ def get_compare(job_id: str, db: Session = Depends(get_db)) -> CompareResponse:
         if isinstance(raw_payload, dict) and _is_country_list_artifact(raw_payload):
             continue
         clean_payload = clean_record.clean_payload or {}
-        field_names = sorted(
-            field_name
-            for field_name in (set(raw_payload) | set(clean_payload))
-            if field_name not in {"sources", "_merge"}
+        if template_columns:
+            clean_payload = map_clean_payload_to_template(
+                clean_payload,
+                template_columns=template_columns,
+                defaults=defaults,
+                allow_rule_based_defaults=True,
+            )
+        field_names = _compare_field_order(
+            raw_payload=raw_payload,
+            clean_payload=clean_payload,
+            template_fields=template_fields,
         )
         merge_payload = (raw_payload.get("_merge") or {}) if isinstance(raw_payload, dict) else {}
         field_sources = merge_payload.get("field_sources") or {}

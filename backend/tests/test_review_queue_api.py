@@ -89,6 +89,7 @@ class FakeSession:
                     "name": "Vietnam National University, Hanoi",
                     "description": "National research university in Hanoi.",
                     "website": "https://www.vnu.edu.vn",
+                    "snippet": "Internal evidence that should not be displayed as a clean field.",
                     "source_url": "https://en.wikipedia.org/wiki/Vietnam_National_University,_Hanoi",
                     "_merge": {"source_names": {"src_wikipedia": "Wikipedia universities by country index"}},
                 },
@@ -171,6 +172,7 @@ def test_review_queue_returns_items_needing_review(monkeypatch) -> None:
     assert crawled_fields["description"]["value"] == "National research university in Hanoi."
     assert crawled_fields["website"]["value"] == "https://www.vnu.edu.vn"
     assert crawled_fields["website"]["status"] == "captured"
+    assert "snippet" not in crawled_fields
     assert crawled_fields["email"]["value"] == "bad-email"
     assert crawled_fields["email"]["status"] == "needs_review"
     assert crawled_fields["email"]["reason"] == "Invalid format"
