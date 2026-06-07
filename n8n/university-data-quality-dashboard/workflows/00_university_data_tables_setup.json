@@ -1,0 +1,51 @@
+{
+  "name": "University Data Tables Setup",
+  "nodes": [
+    {
+      "parameters": {},
+      "id": "f7b866b7-7427-5424-8ac1-ecedb099ee7a",
+      "name": "Manual Trigger",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        0,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "\nconst tableSchemas = {\n  \"university_import_runs\": [\n    {\n      \"name\": \"run_id\",\n      \"type\": \"string\"\n    },\n    {\n      \"name\": \"started_at\",\n      \"type\": \"datetime\"\n    },\n    {\n      \"name\": \"finished_at\",\n      \"type\": \"datetime\"\n    },\n    {\n      \"name\": \"countries\",\n      \"type\": \"string\"\n    },\n    {\n      \"name\": \"country_count\",\n      \"type\": \"number\"\n    },\n    {\n      \"name\": \"institution_count\",\n      \"type\": \"number\"\n    },\n    {\n      \"name\": \"quality_summary_json\",\n      \"type\": \"string\"\n    },\n    {\n      \"name\": \"output_file\",\n      \"type\": \"string\"\n    },\n    {\n      \"name\": \"status\",\n      \"type\": \"string\"\n    }\n  ],\n  \"university_records\": [\n    {\n      \"name\": \"id\",\n      \"type\": \"string\"\n    },\n    {\n      \"name\": \"name\",\n      \"type\": \"string\"\n    },\n    {\n      \"name\": \"location\",\n      \"type\": \"string\"\n    },\n    {\n      \"name\": \"description\",\n      \"type\": \"string\"\n    },\n    {\n      \"name\": \"slug\",\n      \"type\": \"string\"\n    },\n    {\n      \"name\": \"sponsored\",\n      \"type\": \"string\"\n    },\n    {\n      \"name\": \"website\",\n      \"type\": \"string\"\n    },\n    {\n      \"name\": \"global_rank\",\n      \"type\": \"string\"\n    },\n    {\n      \"name\": \"financials\",\n      \"type\": \"string\"\n    },\n    {\n      \"name\": \"student_loan_available\",\n      \"type\": \"string\"\n    },\n    {\n      \"name\": \"campus_student_life\",\n      \"type\": \"string\"\n    },\n    {\n      \"name\": \"number_of_students\",\n      \"type\": \"string\"\n    },\n    {\n      \"name\": \"student_to_faculty_ratio\",\n      \"type\": \"string\"\n    },\n    {\n      \"name\": \"international_student_ratio\",\n      \"type\": \"string\"\n    },\n    {\n      \"name\": \"housing_availability\",\n      \"type\": \"string\"\n    },\n    {\n      \"name\": \"admissions_contact\",\n      \"type\": \"string\"\n    },\n    {\n      \"name\": \"admissions_phone\",\n      \"type\": \"string\"\n    },\n    {\n      \"name\": \"contact_person\",\n      \"type\": \"string\"\n    },\n    {\n      \"name\": \"admissions_page_link\",\n      \"type\": \"string\"\n    },\n    {\n      \"name\": \"immigration_support\",\n      \"type\": \"string\"\n    },\n    {\n      \"name\": \"university_campuses\",\n      \"type\": \"string\"\n    },\n    {\n      \"name\": \"country_name\",\n      \"type\": \"string\"\n    },\n    {\n      \"name\": \"quality_score\",\n      \"type\": \"number\"\n    },\n    {\n      \"name\": \"quality_status\",\n      \"type\": \"string\"\n    },\n    {\n      \"name\": \"truth_status\",\n      \"type\": \"string\"\n    },\n    {\n      \"name\": \"review_status\",\n      \"type\": \"string\"\n    },\n    {\n      \"name\": \"export_ready\",\n      \"type\": \"boolean\"\n    },\n    {\n      \"name\": \"source_url\",\n      \"type\": \"string\"\n    },\n    {\n      \"name\": \"wikipedia_url\",\n      \"type\": \"string\"\n    },\n    {\n      \"name\": \"wikidata_url\",\n      \"type\": \"string\"\n    },\n    {\n      \"name\": \"official_url\",\n      \"type\": \"string\"\n    },\n    {\n      \"name\": \"evidence_urls\",\n      \"type\": \"string\"\n    },\n    {\n      \"name\": \"score_components_json\",\n      \"type\": \"string\"\n    },\n    {\n      \"name\": \"risky_flags_json\",\n      \"type\": \"string\"\n    },\n    {\n      \"name\": \"finding_count\",\n      \"type\": \"number\"\n    },\n    {\n      \"name\": \"critical_count\",\n      \"type\": \"number\"\n    },\n    {\n      \"name\": \"major_count\",\n      \"type\": \"number\"\n    },\n    {\n      \"name\": \"run_id\",\n      \"type\": \"string\"\n    },\n    {\n      \"name\": \"created_at\",\n      \"type\": \"datetime\"\n    },\n    {\n      \"name\": \"updated_at\",\n      \"type\": \"datetime\"\n    },\n    {\n      \"name\": \"reviewed_at\",\n      \"type\": \"datetime\"\n    },\n    {\n      \"name\": \"reviewer\",\n      \"type\": \"string\"\n    }\n  ],\n  \"university_quality_findings\": [\n    {\n      \"name\": \"finding_id\",\n      \"type\": \"string\"\n    },\n    {\n      \"name\": \"run_id\",\n      \"type\": \"string\"\n    },\n    {\n      \"name\": \"slug\",\n      \"type\": \"string\"\n    },\n    {\n      \"name\": \"name\",\n      \"type\": \"string\"\n    },\n    {\n      \"name\": \"field\",\n      \"type\": \"string\"\n    },\n    {\n      \"name\": \"severity\",\n      \"type\": \"string\"\n    },\n    {\n      \"name\": \"rule_id\",\n      \"type\": \"string\"\n    },\n    {\n      \"name\": \"message\",\n      \"type\": \"string\"\n    },\n    {\n      \"name\": \"evidence_url\",\n      \"type\": \"string\"\n    },\n    {\n      \"name\": \"created_at\",\n      \"type\": \"datetime\"\n    }\n  ],\n  \"university_review_audit\": [\n    {\n      \"name\": \"audit_id\",\n      \"type\": \"string\"\n    },\n    {\n      \"name\": \"target_slug\",\n      \"type\": \"string\"\n    },\n    {\n      \"name\": \"user\",\n      \"type\": \"string\"\n    },\n    {\n      \"name\": \"action\",\n      \"type\": \"string\"\n    },\n    {\n      \"name\": \"timestamp\",\n      \"type\": \"datetime\"\n    },\n    {\n      \"name\": \"before_values\",\n      \"type\": \"string\"\n    },\n    {\n      \"name\": \"after_values\",\n      \"type\": \"string\"\n    },\n    {\n      \"name\": \"notes\",\n      \"type\": \"string\"\n    }\n  ],\n  \"country_crawl_state\": [\n    {\n      \"name\": \"country_name\",\n      \"type\": \"string\"\n    },\n    {\n      \"name\": \"country_code\",\n      \"type\": \"number\"\n    },\n    {\n      \"name\": \"list_page_title\",\n      \"type\": \"string\"\n    },\n    {\n      \"name\": \"source_url\",\n      \"type\": \"string\"\n    },\n    {\n      \"name\": \"last_run_id\",\n      \"type\": \"string\"\n    },\n    {\n      \"name\": \"last_offset\",\n      \"type\": \"number\"\n    },\n    {\n      \"name\": \"status\",\n      \"type\": \"string\"\n    },\n    {\n      \"name\": \"updated_at\",\n      \"type\": \"datetime\"\n    }\n  ]\n};\nreturn Object.entries(tableSchemas).map(([table_name, columns]) => {\n  return { json: { table_name, columns, column_count: columns.length } };\n});\n"
+      },
+      "id": "ac90141a-d0f5-572a-9637-27aee8be075e",
+      "name": "Emit Data Table Schemas",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        260,
+        0
+      ],
+      "executeOnce": true
+    }
+  ],
+  "connections": {
+    "Manual Trigger": {
+      "main": [
+        [
+          {
+            "node": "Emit Data Table Schemas",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "pinData": {},
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "staticData": null,
+  "meta": {
+    "templateCredsSetupCompleted": true
+  }
+}

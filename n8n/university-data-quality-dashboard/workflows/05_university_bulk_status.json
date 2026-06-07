@@ -1,0 +1,215 @@
+{
+  "name": "University Bulk Status",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "university-bulk-status",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "258493d8-488c-5b5b-ac46-ab1fea984a4c",
+      "name": "POST /university-bulk-status",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        0,
+        0
+      ],
+      "webhookId": "7d04ddd0-3be3-59ef-b1b6-58f352ce"
+    },
+    {
+      "parameters": {
+        "jsCode": "\nconst body = $json.body || {};\nconst slugs = body.slugs || body.ids || [];\nconst status = body.review_status || body.status || \"Needs Review\";\nconst now = new Date().toISOString();\nreturn slugs.map((slug) => ({\n  json: {\n    slug,\n    review_status: status,\n    reviewer: body.user || \"n8n\",\n    reviewed_at: now,\n    updated_at: now,\n    _note: body.note || `Bulk ${status}`,\n  },\n}));\n"
+      },
+      "id": "66ee7b89-301f-5a24-b01a-725418b8c266",
+      "name": "Expand Bulk Updates",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        260,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "resource": "row",
+        "operation": "update",
+        "dataTableId": {
+          "__rl": true,
+          "value": "university_records",
+          "mode": "name",
+          "cachedResultName": "university_records"
+        },
+        "matchType": "allConditions",
+        "filters": {
+          "conditions": [
+            {
+              "keyName": "slug",
+              "condition": "eq",
+              "keyValue": "={{ $json.slug }}"
+            }
+          ]
+        },
+        "columns": {
+          "mappingMode": "autoMapInputData",
+          "value": {},
+          "matchingColumns": [],
+          "schema": [],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        }
+      },
+      "id": "c929e32a-b572-59a8-bb6f-b7a578a80cba",
+      "name": "Bulk Update university_records",
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1.1,
+      "position": [
+        520,
+        -120
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "\nreturn $input.all().map((item, index) => ({\n  json: {\n    audit_id: `audit-${Date.now()}-${index}-${item.json.slug}`,\n    target_slug: item.json.slug,\n    user: item.json.reviewer || \"n8n\",\n    action: \"bulk_status_update\",\n    timestamp: new Date().toISOString(),\n    before_values: \"{}\",\n    after_values: JSON.stringify({ review_status: item.json.review_status }),\n    notes: item.json._note || \"\",\n  },\n}));\n"
+      },
+      "id": "43041a34-11da-5aee-abdc-e396ab85a8ab",
+      "name": "Build Bulk Audit Rows",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        520,
+        120
+      ]
+    },
+    {
+      "parameters": {
+        "resource": "row",
+        "operation": "insert",
+        "dataTableId": {
+          "__rl": true,
+          "value": "university_review_audit",
+          "mode": "name",
+          "cachedResultName": "university_review_audit"
+        },
+        "columns": {
+          "mappingMode": "autoMapInputData",
+          "value": {},
+          "matchingColumns": [],
+          "schema": [],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        }
+      },
+      "id": "1d23a216-8cef-5d5f-b509-2785cae9a513",
+      "name": "Insert Bulk Audit",
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1.1,
+      "position": [
+        780,
+        120
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "\nreturn [{ json: { ok: true, action: \"bulk_status_update\", count: $input.all().length, timestamp: new Date().toISOString() } }];\n"
+      },
+      "id": "34466132-85b7-5bfb-814b-df95a2af0e1d",
+      "name": "Build Bulk Response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1040,
+        120
+      ],
+      "executeOnce": true
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ $json }}",
+        "options": {
+          "responseCode": 200
+        }
+      },
+      "id": "a5a7c0e5-0c22-55f9-a8c6-3ff8b28bb7d0",
+      "name": "Return Bulk JSON",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.4,
+      "position": [
+        1300,
+        120
+      ]
+    }
+  ],
+  "connections": {
+    "POST /university-bulk-status": {
+      "main": [
+        [
+          {
+            "node": "Expand Bulk Updates",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Expand Bulk Updates": {
+      "main": [
+        [
+          {
+            "node": "Bulk Update university_records",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Build Bulk Audit Rows",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Bulk Audit Rows": {
+      "main": [
+        [
+          {
+            "node": "Insert Bulk Audit",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Insert Bulk Audit": {
+      "main": [
+        [
+          {
+            "node": "Build Bulk Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Bulk Response": {
+      "main": [
+        [
+          {
+            "node": "Return Bulk JSON",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "pinData": {},
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "staticData": null,
+  "meta": {
+    "templateCredsSetupCompleted": true
+  }
+}

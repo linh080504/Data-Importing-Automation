@@ -1,0 +1,29 @@
+@import "tailwindcss";
+
+:root {
+  --background: #f4f6f5;
+  --foreground: #1f2723;
+}
+
+html,
+body {
+  min-height: 100%;
+}
+
+body {
+  margin: 0;
+  background: var(--background);
+  color: var(--foreground);
+  overflow-x: hidden;
+}
+
+button,
+input,
+select,
+textarea {
+  letter-spacing: 0;
+}
+
+* {
+  box-sizing: border-box;
+}

@@ -1,0 +1,119 @@
+{
+  "name": "University Quality API",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "GET",
+        "path": "university-quality-api",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "ccfb1a23-c372-5f48-8473-0f2bf3e586d2",
+      "name": "GET /university-quality-api",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        0,
+        0
+      ],
+      "webhookId": "e95bdf9f-bad5-5993-ba37-78e4aa46"
+    },
+    {
+      "parameters": {
+        "resource": "row",
+        "operation": "get",
+        "dataTableId": {
+          "__rl": true,
+          "value": "university_records",
+          "mode": "name",
+          "cachedResultName": "university_records"
+        },
+        "returnAll": true
+      },
+      "id": "1969435a-608e-5b15-81e4-49d2f2aaba62",
+      "name": "Get university_records",
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1.1,
+      "position": [
+        260,
+        0
+      ],
+      "alwaysOutputData": true,
+      "executeOnce": true
+    },
+    {
+      "parameters": {
+        "jsCode": "const UniversityQuality = (() => {\n  const CSV_HEADERS = [\n    \"id\",\n    \"name\",\n    \"location\",\n    \"description\",\n    \"slug\",\n    \"sponsored\",\n    \"website\",\n    \"global_rank\",\n    \"financials\",\n    \"student_loan_available\",\n    \"campus_student_life\",\n    \"number_of_students\",\n    \"student_to_faculty_ratio\",\n    \"international_student_ratio\",\n    \"housing_availability\",\n    \"admissions_contact\",\n    \"admissions_phone\",\n    \"contact_person\",\n    \"admissions_page_link\",\n    \"immigration_support\",\n    \"university_campuses\",\n  ];\n\n  const OPTIONAL_EXPORT_FIELDS = new Set([\"id\", \"global_rank\", \"contact_person\"]);\n  const BINARY_FIELDS = [\n    \"sponsored\",\n    \"student_loan_available\",\n    \"housing_availability\",\n    \"immigration_support\",\n  ];\n  const INTEGER_FIELDS = [\n    \"location\",\n    \"global_rank\",\n    \"number_of_students\",\n    \"student_to_faculty_ratio\",\n    \"international_student_ratio\",\n    \"university_campuses\",\n  ];\n  const NUMERIC_RANGES = {\n    number_of_students: [50, 500000],\n    student_to_faculty_ratio: [3, 80],\n    international_student_ratio: [0, 100],\n    university_campuses: [1, 200],\n  };\n\n  const COUNTRY_CODES = {\n    Afghanistan: 4,\n    Albania: 8,\n    Algeria: 12,\n    Argentina: 32,\n    Australia: 36,\n    Austria: 40,\n    Bangladesh: 50,\n    Belgium: 56,\n    Brazil: 76,\n    Canada: 124,\n    Chile: 152,\n    China: 156,\n    Colombia: 170,\n    Denmark: 208,\n    Egypt: 818,\n    Finland: 246,\n    France: 250,\n    Germany: 276,\n    Ghana: 288,\n    Greece: 300,\n    India: 356,\n    Indonesia: 360,\n    Ireland: 372,\n    Israel: 376,\n    Italy: 380,\n    Japan: 392,\n    Kenya: 404,\n    Malaysia: 458,\n    Mexico: 484,\n    Netherlands: 528,\n    \"New Zealand\": 554,\n    Nigeria: 566,\n    Norway: 578,\n    Pakistan: 586,\n    Philippines: 608,\n    Poland: 616,\n    Portugal: 620,\n    Romania: 642,\n    Singapore: 702,\n    \"South Africa\": 710,\n    \"South Korea\": 410,\n    Spain: 724,\n    Sweden: 752,\n    Switzerland: 756,\n    Thailand: 764,\n    Turkey: 792,\n    Ukraine: 804,\n    \"United Arab Emirates\": 784,\n    \"United Kingdom\": 826,\n    \"United States\": 840,\n    Vietnam: 704,\n  };\n\n  function toText(value) {\n    if (value === null || value === undefined) return \"\";\n    return String(value).trim();\n  }\n\n  function isBlank(value) {\n    return toText(value) === \"\";\n  }\n\n  function isIntegerLike(value, allowBlank) {\n    if (allowBlank && isBlank(value)) return true;\n    return /^-?\\d+$/.test(toText(value));\n  }\n\n  function toInt(value, fallback) {\n    if (!isIntegerLike(value, false)) return fallback;\n    return Number.parseInt(toText(value), 10);\n  }\n\n  function isBinary(value) {\n    return toText(value) === \"0\" || toText(value) === \"1\" || value === 0 || value === 1;\n  }\n\n  function isUrl(value, allowBlank) {\n    if (allowBlank && isBlank(value)) return true;\n    try {\n      const url = new URL(toText(value));\n      return url.protocol === \"http:\" || url.protocol === \"https:\";\n    } catch (_error) {\n      return false;\n    }\n  }\n\n  function isEmail(value, allowBlank) {\n    if (allowBlank && isBlank(value)) return true;\n    return /^[^\\s@]+@[^\\s@]+\\.[^\\s@]+$/.test(toText(value));\n  }\n\n  function isPhone(value, allowBlank) {\n    if (allowBlank && isBlank(value)) return true;\n    return /^\\+\\d[\\d\\s().-]{6,24}$/.test(toText(value));\n  }\n\n  function normalizeDomain(value) {\n    if (!isUrl(value, true) || isBlank(value)) return \"\";\n    try {\n      return new URL(toText(value)).hostname.toLowerCase().replace(/^www\\./, \"\");\n    } catch (_error) {\n      return \"\";\n    }\n  }\n\n  function emailDomain(email) {\n    if (!isEmail(email, true) || isBlank(email)) return \"\";\n    return toText(email).split(\"@\").pop().toLowerCase();\n  }\n\n  function rootDomain(domain) {\n    const parts = toText(domain).split(\".\").filter(Boolean);\n    if (parts.length <= 2) return parts.join(\".\");\n    return parts.slice(-2).join(\".\");\n  }\n\n  function sameRootDomain(a, b) {\n    if (!a || !b) return false;\n    return rootDomain(a) === rootDomain(b);\n  }\n\n  function slugify(value) {\n    return toText(value)\n      .normalize(\"NFKD\")\n      .replace(/[\\u0300-\\u036f]/g, \"\")\n      .toLowerCase()\n      .replace(/&/g, \" and \")\n      .replace(/[^a-z0-9]+/g, \"-\")\n      .replace(/^-+|-+$/g, \"\")\n      .replace(/-{2,}/g, \"-\");\n  }\n\n  function csvEscape(value) {\n    const raw = value === null || value === undefined ? \"\" : String(value);\n    if (/[\",\\r\\n]/.test(raw)) return `\"${raw.replace(/\"/g, '\"\"')}\"`;\n    return raw;\n  }\n\n  function parseEvidence(record) {\n    const evidence = [];\n    const add = (type, url, label) => {\n      if (!isBlank(url)) evidence.push({ type, url: toText(url), label: label || type });\n    };\n\n    add(\"official\", record.official_url || record.official_site_evidence, \"Official site\");\n    add(\"wikipedia\", record.wikipedia_url || record.wiki_url || record.source_url, \"Wikipedia\");\n    add(\"wikidata\", record.wikidata_url || record.wikidata, \"Wikidata\");\n\n    const raw = record.evidence_urls || record.evidence || record.source_evidence;\n    if (!isBlank(raw)) {\n      if (Array.isArray(raw)) {\n        raw.forEach((entry) => {\n          if (typeof entry === \"string\") add(\"source\", entry, \"Source\");\n          else if (entry && typeof entry === \"object\") add(entry.type || \"source\", entry.url, entry.label);\n        });\n      } else {\n        try {\n          const parsed = JSON.parse(raw);\n          if (Array.isArray(parsed)) {\n            parsed.forEach((entry) => {\n              if (typeof entry === \"string\") add(\"source\", entry, \"Source\");\n              else if (entry && typeof entry === \"object\") add(entry.type || \"source\", entry.url, entry.label);\n            });\n          }\n        } catch (_error) {\n          toText(raw)\n            .split(/[,\\n]/)\n            .map((item) => item.trim())\n            .filter(Boolean)\n            .forEach((url) => add(\"source\", url, \"Source\"));\n        }\n      }\n    }\n\n    if (!isBlank(record.website)) add(\"official\", record.website, \"Website\");\n    if (!isBlank(record.admissions_page_link)) add(\"official\", record.admissions_page_link, \"Admissions\");\n\n    const unique = [];\n    const seen = new Set();\n    for (const entry of evidence) {\n      const key = `${entry.type}:${entry.url}`;\n      if (!seen.has(key) && isUrl(entry.url, false)) {\n        unique.push(entry);\n        seen.add(key);\n      }\n    }\n    return unique;\n  }\n\n  function normalizeRecord(input, context) {\n    const record = { ...input };\n    for (const header of CSV_HEADERS) {\n      if (record[header] === undefined || record[header] === null) record[header] = \"\";\n      else record[header] = toText(record[header]);\n    }\n\n    const country = toText(record.country || record.country_name || context?.country);\n    if (isBlank(record.location) && country && COUNTRY_CODES[country]) {\n      record.location = String(COUNTRY_CODES[country]);\n    }\n    if (isBlank(record.slug)) record.slug = slugify(record.name);\n    if (!isBlank(record.country) && !/,/.test(record.name)) record.name = `${record.name}, ${record.country}`;\n    return record;\n  }\n\n  function issue(field, severity, ruleId, message, evidenceUrl) {\n    return { field, severity, rule_id: ruleId, message, evidence_url: evidenceUrl || \"\" };\n  }\n\n  function scoreRecord(input, context = {}) {\n    const record = normalizeRecord(input, context);\n    const findings = [];\n    const evidence = parseEvidence(record);\n    const evidenceTypes = new Set(evidence.map((entry) => entry.type));\n    const officialDomain = normalizeDomain(record.website);\n    const admissionsDomain = normalizeDomain(record.admissions_page_link);\n    const mailDomain = emailDomain(record.admissions_contact);\n\n    let schemaErrors = 0;\n    let schemaWarnings = 0;\n\n    if (!isBlank(record.id)) {\n      findings.push(issue(\"id\", \"minor\", \"csv.id.must_be_blank\", \"id must be empty for imports.\"));\n      schemaWarnings += 1;\n    }\n\n    for (const field of CSV_HEADERS) {\n      if (OPTIONAL_EXPORT_FIELDS.has(field)) continue;\n      if (isBlank(record[field])) {\n        const severity = [\"name\", \"location\", \"description\", \"slug\"].includes(field) ? \"critical\" : \"major\";\n        findings.push(issue(field, severity, `csv.${field}.missing`, `${field} is missing.`));\n        if (severity === \"critical\") schemaErrors += 1;\n      }\n    }\n\n    for (const field of BINARY_FIELDS) {\n      if (!isBinary(record[field])) {\n        findings.push(issue(field, \"critical\", `csv.${field}.binary`, `${field} must be 0 or 1.`));\n        schemaErrors += 1;\n      }\n    }\n\n    for (const field of INTEGER_FIELDS) {\n      const allowBlank = field === \"global_rank\";\n      if (!isIntegerLike(record[field], allowBlank)) {\n        findings.push(issue(field, \"critical\", `csv.${field}.integer`, `${field} must be a plain integer.`));\n        schemaErrors += 1;\n      }\n    }\n\n    if (!isUrl(record.website, true)) {\n      findings.push(issue(\"website\", \"major\", \"csv.website.url\", \"website must be a full http(s) URL.\"));\n      schemaWarnings += 1;\n    }\n    if (!isUrl(record.admissions_page_link, true)) {\n      findings.push(issue(\"admissions_page_link\", \"major\", \"csv.admissions_page_link.url\", \"admissions page must be a full http(s) URL.\"));\n      schemaWarnings += 1;\n    }\n    if (!isEmail(record.admissions_contact, true)) {\n      findings.push(issue(\"admissions_contact\", \"major\", \"csv.admissions_contact.email\", \"admissions_contact must be a real email format.\"));\n      schemaWarnings += 1;\n    }\n    if (!isPhone(record.admissions_phone, true)) {\n      findings.push(issue(\"admissions_phone\", \"major\", \"csv.admissions_phone.phone\", \"admissions_phone must start with a country code.\"));\n      schemaWarnings += 1;\n    }\n\n    const schemaScore = Math.max(0, 20 - schemaErrors * 5 - schemaWarnings * 2);\n\n    const required = CSV_HEADERS.filter((field) => !OPTIONAL_EXPORT_FIELDS.has(field));\n    const completeCount = required.filter((field) => !isBlank(record[field])).length;\n    const completenessScore = Math.round((completeCount / required.length) * 20);\n\n    let evidenceScore = 0;\n    if (evidenceTypes.has(\"official\")) evidenceScore += 11;\n    if (evidenceTypes.has(\"wikidata\")) evidenceScore += 7;\n    if (evidenceTypes.has(\"wikipedia\")) evidenceScore += 5;\n    evidenceScore += Math.min(2, evidence.length);\n    evidenceScore = Math.min(25, evidenceScore);\n    if (evidenceScore < 8) {\n      findings.push(issue(\"source_evidence\", \"major\", \"evidence.weak\", \"Source evidence is weak or absent.\"));\n    }\n\n    let contactScore = 0;\n    if (isUrl(record.website, false)) contactScore += 4;\n    if (isUrl(record.admissions_page_link, false)) contactScore += 4;\n    if (isEmail(record.admissions_contact, false)) contactScore += 3;\n    if (isPhone(record.admissions_phone, false)) contactScore += 2;\n    if (\n      (officialDomain && admissionsDomain && sameRootDomain(officialDomain, admissionsDomain)) ||\n      (officialDomain && mailDomain && sameRootDomain(officialDomain, mailDomain))\n    ) {\n      contactScore += 2;\n    }\n    if (officialDomain && admissionsDomain && !sameRootDomain(officialDomain, admissionsDomain)) {\n      findings.push(issue(\"admissions_page_link\", \"major\", \"contact.domain_mismatch\", \"Admissions page domain does not match official website.\", record.admissions_page_link));\n    }\n    if (officialDomain && mailDomain && !sameRootDomain(officialDomain, mailDomain)) {\n      findings.push(issue(\"admissions_contact\", \"minor\", \"contact.email_domain_mismatch\", \"Admissions email domain does not match official website.\"));\n    }\n    contactScore = Math.min(15, contactScore);\n\n    let consistencyScore = 10;\n    for (const [field, range] of Object.entries(NUMERIC_RANGES)) {\n      if (isBlank(record[field]) || !isIntegerLike(record[field], false)) continue;\n      const value = toInt(record[field], 0);\n      if (value < range[0] || value > range[1]) {\n        findings.push(issue(field, field === \"international_student_ratio\" ? \"critical\" : \"major\", `outlier.${field}`, `${field} is outside the expected range ${range[0]}-${range[1]}.`));\n        consistencyScore -= field === \"international_student_ratio\" ? 4 : 2;\n      }\n    }\n    consistencyScore = Math.max(0, consistencyScore);\n\n    const slugCounts = context.slugCounts || {};\n    const nameCounts = context.nameCounts || {};\n    const duplicateSlug = record.slug && slugCounts[record.slug] > 1;\n    const duplicateName = record.name && nameCounts[record.name.toLowerCase()] > 1;\n    let duplicateScore = 10;\n    if (duplicateSlug) {\n      findings.push(issue(\"slug\", \"critical\", \"duplicate.slug\", \"Duplicate slug conflict.\"));\n      duplicateScore = 0;\n    } else if (duplicateName) {\n      findings.push(issue(\"name\", \"major\", \"duplicate.name\", \"Duplicate institution name needs slug disambiguation.\"));\n      duplicateScore = 6;\n    }\n\n    const components = {\n      schema_type_validity: schemaScore,\n      field_completeness: completenessScore,\n      source_evidence_strength: evidenceScore,\n      website_contact_verification: contactScore,\n      consistency_outliers: consistencyScore,\n      duplicate_slug_uniqueness: duplicateScore,\n    };\n\n    const score = Object.values(components).reduce((sum, value) => sum + value, 0);\n    const hasCritical = findings.some((entry) => entry.severity === \"critical\");\n    const importantMissing = findings.some((entry) => entry.rule_id.endsWith(\".missing\") && entry.severity !== \"minor\");\n    let qualityStatus = \"Risky\";\n    if (duplicateSlug || score < 45) qualityStatus = \"Risky\";\n    else if (score >= 85 && (evidenceTypes.has(\"official\") || evidenceTypes.has(\"wikidata\"))) qualityStatus = \"Verified\";\n    else if (score >= 70 && !hasCritical) qualityStatus = \"Probable\";\n    else if (score >= 45 || importantMissing) qualityStatus = \"Needs Review\";\n\n    return {\n      ...record,\n      quality_score: score,\n      quality_status: qualityStatus,\n      truth_status: qualityStatus,\n      export_ready: (record.review_status === \"Approved\" || record.export_approved === \"1\" || record.export_approved === 1) && !hasCritical && score >= 70,\n      score_components: components,\n      evidence_links: evidence,\n      finding_count: findings.length,\n      critical_count: findings.filter((entry) => entry.severity === \"critical\").length,\n      major_count: findings.filter((entry) => entry.severity === \"major\").length,\n      risky_flags: findings.filter((entry) => entry.severity === \"critical\" || entry.severity === \"major\").map((entry) => entry.rule_id),\n      findings,\n    };\n  }\n\n  function makeCounts(records) {\n    const slugCounts = {};\n    const nameCounts = {};\n    for (const row of records) {\n      const slug = toText(row.slug);\n      if (slug) slugCounts[slug] = (slugCounts[slug] || 0) + 1;\n      const name = toText(row.name).toLowerCase();\n      if (name) nameCounts[name] = (nameCounts[name] || 0) + 1;\n    }\n    return { slugCounts, nameCounts };\n  }\n\n  function scoreBatch(records, context = {}) {\n    const normalized = (records || []).map((record) => normalizeRecord(record, context));\n    const counts = makeCounts(normalized);\n    return normalized.map((record) => scoreRecord(record, { ...context, ...counts }));\n  }\n\n  function aggregate(records, context = {}) {\n    const scoredRecords = scoreBatch(records || [], context);\n    const total = scoredRecords.length;\n    const statusCounts = { Verified: 0, Probable: 0, \"Needs Review\": 0, Risky: 0 };\n    const scoreBands = { \"0-44\": 0, \"45-69\": 0, \"70-84\": 0, \"85-100\": 0 };\n    const sourceMix = { official: 0, wikidata: 0, wikipedia: 0, source: 0, none: 0 };\n    const fieldCompleteness = {};\n    const numericOutliers = {};\n    const allFindings = [];\n    const countries = new Set();\n    let duplicateCount = 0;\n\n    for (const field of CSV_HEADERS) fieldCompleteness[field] = { present: 0, missing: 0, pct: 0 };\n    for (const field of Object.keys(NUMERIC_RANGES)) numericOutliers[field] = 0;\n\n    for (const record of scoredRecords) {\n      statusCounts[record.quality_status] = (statusCounts[record.quality_status] || 0) + 1;\n      if (record.quality_score < 45) scoreBands[\"0-44\"] += 1;\n      else if (record.quality_score < 70) scoreBands[\"45-69\"] += 1;\n      else if (record.quality_score < 85) scoreBands[\"70-84\"] += 1;\n      else scoreBands[\"85-100\"] += 1;\n\n      if (!isBlank(record.location)) countries.add(toText(record.location));\n      if (record.risky_flags.includes(\"duplicate.slug\") || record.risky_flags.includes(\"duplicate.name\")) duplicateCount += 1;\n\n      for (const field of CSV_HEADERS) {\n        if (isBlank(record[field])) fieldCompleteness[field].missing += 1;\n        else fieldCompleteness[field].present += 1;\n      }\n\n      const sourceTypes = new Set(record.evidence_links.map((entry) => entry.type));\n      if (!sourceTypes.size) sourceMix.none += 1;\n      for (const type of sourceTypes) sourceMix[type] = (sourceMix[type] || 0) + 1;\n\n      for (const finding of record.findings) {\n        allFindings.push({ ...finding, slug: record.slug, name: record.name });\n        if (finding.rule_id.startsWith(\"outlier.\")) {\n          numericOutliers[finding.field] = (numericOutliers[finding.field] || 0) + 1;\n        }\n      }\n    }\n\n    for (const field of CSV_HEADERS) {\n      const present = fieldCompleteness[field].present;\n      fieldCompleteness[field].pct = total ? Math.round((present / total) * 100) : 0;\n    }\n\n    const completenessAverage = total\n      ? Math.round(Object.values(fieldCompleteness).reduce((sum, item) => sum + item.pct, 0) / CSV_HEADERS.length)\n      : 0;\n    const exportable = scoredRecords.filter((record) => record.export_ready).length;\n\n    return {\n      records: scoredRecords,\n      findings: allFindings,\n      summary: {\n        total,\n        countries: countries.size,\n        verified: statusCounts.Verified || 0,\n        probable: statusCounts.Probable || 0,\n        needs_review: statusCounts[\"Needs Review\"] || 0,\n        risky: statusCounts.Risky || 0,\n        completeness_score: completenessAverage,\n        duplicate_count: duplicateCount,\n        export_ready: exportable,\n        export_blocked: Math.max(0, total - exportable),\n      },\n      charts: {\n        status_counts: statusCounts,\n        score_bands: scoreBands,\n        source_mix: sourceMix,\n        numeric_outliers: numericOutliers,\n      },\n      fieldCompleteness,\n    };\n  }\n\n  function validateExport(records, context = {}) {\n    const scored = scoreBatch(records || [], context);\n    const exportable = scored.filter((record) => record.export_ready);\n    const headerOk = CSV_HEADERS.join(\",\") === \"id,name,location,description,slug,sponsored,website,global_rank,financials,student_loan_available,campus_student_life,number_of_students,student_to_faculty_ratio,international_student_ratio,housing_availability,admissions_contact,admissions_phone,contact_person,admissions_page_link,immigration_support,university_campuses\";\n    const blocked = scored.filter((record) => !record.export_ready).map((record) => ({\n      slug: record.slug,\n      name: record.name,\n      quality_score: record.quality_score,\n      quality_status: record.quality_status,\n      critical_count: record.critical_count,\n      review_status: record.review_status || \"\",\n    }));\n    return { headerOk, exportable, blocked };\n  }\n\n  function toCsv(records, context = {}) {\n    const check = validateExport(records || [], context);\n    if (!check.headerOk) throw new Error(\"CSV header order mismatch.\");\n    const lines = [CSV_HEADERS.join(\",\")];\n    for (const record of check.exportable) {\n      lines.push(CSV_HEADERS.map((header) => csvEscape(record[header])).join(\",\"));\n    }\n    return { filename: \"University_Import_Clean.csv\", csv: `${lines.join(\"\\r\\n\")}\\r\\n`, count: check.exportable.length, blocked: check.blocked };\n  }\n\n  return {\n    CSV_HEADERS,\n    COUNTRY_CODES,\n    normalizeRecord,\n    scoreRecord,\n    scoreBatch,\n    aggregate,\n    validateExport,\n    toCsv,\n    slugify,\n  };\n})();\n\nif (typeof module !== \"undefined\") {\n  module.exports = UniversityQuality;\n}\n\n\nconst records = $input.all()\n  .map((item) => item.json || {})\n  .filter((row) => row.slug || row.name || row.website);\nconst payload = UniversityQuality.aggregate(records);\npayload.ok = true;\npayload.generatedAt = new Date().toISOString();\npayload.csv_headers = UniversityQuality.CSV_HEADERS;\nreturn [{ json: payload }];\n"
+      },
+      "id": "157c1c5f-9d25-5397-b3cd-08f3fdc23c8b",
+      "name": "Build Dashboard Payload",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        520,
+        0
+      ],
+      "executeOnce": true
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ $json }}",
+        "options": {
+          "responseCode": 200
+        }
+      },
+      "id": "dc70428a-640b-5e44-a405-64d1cea52a8d",
+      "name": "Return Quality JSON",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.4,
+      "position": [
+        780,
+        0
+      ]
+    }
+  ],
+  "connections": {
+    "GET /university-quality-api": {
+      "main": [
+        [
+          {
+            "node": "Get university_records",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get university_records": {
+      "main": [
+        [
+          {
+            "node": "Build Dashboard Payload",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Dashboard Payload": {
+      "main": [
+        [
+          {
+            "node": "Return Quality JSON",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "pinData": {},
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "staticData": null,
+  "meta": {
+    "templateCredsSetupCompleted": true
+  }
+}

@@ -1,0 +1,1416 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>University Data Quality</title>
+  <style>
+    :root {
+      --bg: #f5f7f6;
+      --surface: #ffffff;
+      --surface-2: #f9faf8;
+      --text: #1d2520;
+      --muted: #65736b;
+      --line: #d7ddd9;
+      --line-strong: #b9c4be;
+      --green: #2f7d54;
+      --green-soft: #e4f3ea;
+      --amber: #a86f13;
+      --amber-soft: #fff1d6;
+      --red: #b63f3a;
+      --red-soft: #fbe7e5;
+      --teal: #1f766f;
+      --teal-soft: #dff3f1;
+      --violet: #6656a5;
+      --violet-soft: #ece9f7;
+      --charcoal: #2d3330;
+      --shadow: 0 10px 28px rgba(32, 42, 36, 0.08);
+      --radius: 8px;
+      --font: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+
+    * { box-sizing: border-box; }
+    html, body { height: 100%; }
+    body {
+      margin: 0;
+      background: var(--bg);
+      color: var(--text);
+      font-family: var(--font);
+      font-size: 14px;
+      letter-spacing: 0;
+    }
+
+    button, input, select, textarea {
+      font: inherit;
+      letter-spacing: 0;
+    }
+
+    button {
+      border: 1px solid var(--line-strong);
+      background: var(--surface);
+      color: var(--text);
+      min-height: 36px;
+      padding: 0 12px;
+      border-radius: 6px;
+      cursor: pointer;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+      white-space: nowrap;
+    }
+
+    button:hover { border-color: var(--charcoal); }
+    button.primary {
+      border-color: var(--green);
+      background: var(--green);
+      color: #fff;
+    }
+    button.danger {
+      border-color: var(--red);
+      color: var(--red);
+    }
+    button:disabled {
+      opacity: 0.55;
+      cursor: not-allowed;
+    }
+
+    input, select, textarea {
+      width: 100%;
+      min-height: 36px;
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      background: #fff;
+      color: var(--text);
+      padding: 8px 10px;
+      outline: none;
+    }
+    textarea { min-height: 92px; resize: vertical; }
+    input:focus, select:focus, textarea:focus { border-color: var(--teal); box-shadow: 0 0 0 3px rgba(31, 118, 111, 0.12); }
+
+    .app-shell {
+      min-height: 100%;
+      display: grid;
+      grid-template-rows: auto auto 1fr;
+    }
+
+    .topbar {
+      height: 64px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 0 24px;
+      background: var(--surface);
+      border-bottom: 1px solid var(--line);
+      position: sticky;
+      top: 0;
+      z-index: 20;
+    }
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      min-width: 0;
+    }
+    .brand-mark {
+      width: 34px;
+      height: 34px;
+      border-radius: 7px;
+      background: var(--charcoal);
+      color: #fff;
+      display: grid;
+      place-items: center;
+      font-weight: 800;
+    }
+    .brand h1 {
+      font-size: 17px;
+      margin: 0;
+      line-height: 1.1;
+    }
+    .brand span {
+      color: var(--muted);
+      font-size: 12px;
+    }
+    .top-actions { display: flex; gap: 8px; align-items: center; }
+
+    .tabs {
+      display: flex;
+      gap: 6px;
+      padding: 12px 24px 0;
+      overflow-x: auto;
+      background: var(--bg);
+    }
+    .tab {
+      min-height: 38px;
+      border-color: transparent;
+      background: transparent;
+      color: var(--muted);
+      border-bottom: 2px solid transparent;
+      border-radius: 6px 6px 0 0;
+    }
+    .tab.active {
+      color: var(--text);
+      background: var(--surface);
+      border-color: var(--line);
+      border-bottom-color: var(--surface);
+    }
+
+    main {
+      padding: 16px 24px 28px;
+      display: grid;
+      gap: 16px;
+    }
+
+    .panel {
+      background: var(--surface);
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      box-shadow: var(--shadow);
+    }
+    .panel-header {
+      min-height: 48px;
+      padding: 12px 14px;
+      border-bottom: 1px solid var(--line);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+    }
+    .panel-title {
+      display: flex;
+      align-items: baseline;
+      gap: 8px;
+      min-width: 0;
+    }
+    .panel-title h2 {
+      margin: 0;
+      font-size: 14px;
+      font-weight: 750;
+    }
+    .panel-title span {
+      color: var(--muted);
+      font-size: 12px;
+    }
+    .panel-body { padding: 14px; }
+
+    .kpi-grid {
+      display: grid;
+      grid-template-columns: repeat(8, minmax(132px, 1fr));
+      gap: 10px;
+    }
+    .kpi {
+      background: var(--surface);
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      padding: 12px;
+      min-height: 92px;
+      display: grid;
+      align-content: space-between;
+    }
+    .kpi label {
+      color: var(--muted);
+      font-size: 12px;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    .kpi strong {
+      font-size: 26px;
+      line-height: 1;
+      margin-top: 8px;
+    }
+    .kpi small {
+      color: var(--muted);
+      margin-top: 8px;
+      display: block;
+      min-height: 16px;
+    }
+
+    .grid-2 { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 16px; }
+    .grid-3 { display: grid; grid-template-columns: 1.1fr 1fr 1fr; gap: 16px; }
+    .grid-main { display: grid; grid-template-columns: 280px minmax(0, 1fr); gap: 16px; align-items: start; }
+
+    .filters {
+      display: grid;
+      gap: 10px;
+      position: sticky;
+      top: 128px;
+    }
+    .filter-row { display: grid; gap: 6px; }
+    .filter-row label {
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 650;
+    }
+
+    .toolbar {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      align-items: center;
+    }
+    .toolbar select { width: auto; min-width: 160px; }
+
+    .chart-box {
+      min-height: 250px;
+      display: grid;
+      grid-template-rows: auto 1fr;
+      gap: 8px;
+    }
+    canvas {
+      width: 100%;
+      min-height: 206px;
+      display: block;
+    }
+    .legend {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px 12px;
+      color: var(--muted);
+      font-size: 12px;
+    }
+    .legend-item { display: inline-flex; align-items: center; gap: 6px; }
+    .dot {
+      width: 9px;
+      height: 9px;
+      border-radius: 999px;
+      background: var(--muted);
+      flex: 0 0 auto;
+    }
+
+    .bar-list { display: grid; gap: 9px; }
+    .bar-row {
+      display: grid;
+      grid-template-columns: 132px 1fr 44px;
+      gap: 10px;
+      align-items: center;
+      font-size: 12px;
+      color: var(--muted);
+    }
+    .bar-track {
+      height: 11px;
+      background: #eef1ef;
+      border-radius: 999px;
+      overflow: hidden;
+    }
+    .bar-fill {
+      height: 100%;
+      border-radius: 999px;
+      background: var(--teal);
+    }
+
+    .heatmap {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+      gap: 8px;
+    }
+    .heat-cell {
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      padding: 10px;
+      display: grid;
+      gap: 7px;
+      background: var(--surface-2);
+      min-width: 0;
+    }
+    .heat-cell strong {
+      font-size: 12px;
+      overflow-wrap: anywhere;
+    }
+    .heat-cell span { color: var(--muted); font-size: 12px; }
+    .heat-rail {
+      height: 6px;
+      background: #e9eeeb;
+      border-radius: 999px;
+      overflow: hidden;
+    }
+    .heat-rail i { display: block; height: 100%; border-radius: 999px; }
+
+    .table-wrap {
+      overflow: auto;
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      background: var(--surface);
+    }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      min-width: 1120px;
+    }
+    th, td {
+      padding: 10px 11px;
+      border-bottom: 1px solid var(--line);
+      text-align: left;
+      vertical-align: middle;
+      white-space: nowrap;
+    }
+    th {
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 750;
+      background: var(--surface-2);
+      position: sticky;
+      top: 0;
+      z-index: 1;
+    }
+    td.name-cell {
+      min-width: 280px;
+      white-space: normal;
+      line-height: 1.35;
+    }
+    .muted { color: var(--muted); }
+    .mono {
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
+      font-size: 12px;
+    }
+
+    .pill {
+      display: inline-flex;
+      align-items: center;
+      min-height: 24px;
+      padding: 0 9px;
+      border-radius: 999px;
+      font-size: 12px;
+      font-weight: 700;
+      border: 1px solid transparent;
+      white-space: nowrap;
+    }
+    .pill.verified { background: var(--green-soft); color: var(--green); border-color: #b8dcc6; }
+    .pill.probable { background: var(--teal-soft); color: var(--teal); border-color: #a9d9d4; }
+    .pill.review { background: var(--amber-soft); color: var(--amber); border-color: #f0cf91; }
+    .pill.risky { background: var(--red-soft); color: var(--red); border-color: #edbab6; }
+    .pill.neutral { background: #eef1ef; color: var(--muted); border-color: var(--line); }
+
+    .score {
+      width: 56px;
+      font-weight: 800;
+      text-align: right;
+    }
+
+    .issue-list {
+      display: grid;
+      gap: 8px;
+      max-height: 360px;
+      overflow: auto;
+    }
+    .issue {
+      border: 1px solid var(--line);
+      border-left-width: 4px;
+      border-radius: 6px;
+      padding: 9px 10px;
+      display: grid;
+      gap: 4px;
+      background: var(--surface-2);
+    }
+    .issue.critical { border-left-color: var(--red); }
+    .issue.major { border-left-color: var(--amber); }
+    .issue.minor { border-left-color: var(--teal); }
+    .issue strong { font-size: 12px; overflow-wrap: anywhere; }
+    .issue span { color: var(--muted); font-size: 12px; overflow-wrap: anywhere; }
+
+    .export-box {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 12px;
+    }
+    .metric {
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      padding: 12px;
+      background: var(--surface-2);
+    }
+    .metric label { color: var(--muted); font-size: 12px; display: block; }
+    .metric strong { display: block; margin-top: 6px; font-size: 22px; }
+
+    .drawer-backdrop {
+      position: fixed;
+      inset: 0;
+      background: rgba(20, 27, 23, 0.34);
+      display: none;
+      z-index: 40;
+    }
+    .drawer-backdrop.open { display: block; }
+    .drawer {
+      position: fixed;
+      top: 0;
+      right: 0;
+      height: 100%;
+      width: min(860px, 100%);
+      background: var(--surface);
+      border-left: 1px solid var(--line);
+      transform: translateX(100%);
+      transition: transform 180ms ease;
+      z-index: 50;
+      display: grid;
+      grid-template-rows: auto 1fr auto;
+      box-shadow: -18px 0 34px rgba(32, 42, 36, 0.16);
+    }
+    .drawer.open { transform: translateX(0); }
+    .drawer-header,
+    .drawer-footer {
+      padding: 14px 16px;
+      border-bottom: 1px solid var(--line);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+    }
+    .drawer-footer { border-bottom: 0; border-top: 1px solid var(--line); }
+    .drawer-title { min-width: 0; }
+    .drawer-title h3 {
+      margin: 0 0 4px;
+      font-size: 16px;
+      line-height: 1.2;
+      overflow-wrap: anywhere;
+    }
+    .drawer-body {
+      overflow: auto;
+      padding: 16px;
+      display: grid;
+      gap: 16px;
+    }
+    .form-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 12px;
+    }
+    .form-field {
+      display: grid;
+      gap: 6px;
+      min-width: 0;
+    }
+    .form-field.full { grid-column: 1 / -1; }
+    .form-field label {
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 700;
+      overflow-wrap: anywhere;
+    }
+    .evidence-list {
+      display: grid;
+      gap: 7px;
+    }
+    .evidence-list a {
+      color: var(--teal);
+      text-decoration: none;
+      overflow-wrap: anywhere;
+    }
+    .evidence-list a:hover { text-decoration: underline; }
+
+    .empty {
+      min-height: 180px;
+      display: grid;
+      place-items: center;
+      color: var(--muted);
+      border: 1px dashed var(--line-strong);
+      border-radius: var(--radius);
+      background: var(--surface-2);
+      text-align: center;
+      padding: 20px;
+    }
+
+    .toast {
+      position: fixed;
+      left: 50%;
+      bottom: 24px;
+      transform: translateX(-50%);
+      background: var(--charcoal);
+      color: #fff;
+      padding: 10px 14px;
+      border-radius: 6px;
+      box-shadow: var(--shadow);
+      display: none;
+      z-index: 80;
+      max-width: min(520px, calc(100% - 32px));
+    }
+    .toast.open { display: block; }
+
+    [hidden] { display: none !important; }
+
+    @media (max-width: 1280px) {
+      .kpi-grid { grid-template-columns: repeat(4, minmax(132px, 1fr)); }
+      .grid-3 { grid-template-columns: 1fr; }
+      .grid-2 { grid-template-columns: 1fr; }
+    }
+
+    @media (max-width: 860px) {
+      .topbar { height: auto; min-height: 64px; padding: 12px 14px; align-items: flex-start; gap: 12px; }
+      .top-actions { flex-wrap: wrap; justify-content: flex-end; }
+      .tabs { padding-left: 14px; padding-right: 14px; }
+      main { padding: 14px; }
+      .kpi-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+      .grid-main { grid-template-columns: 1fr; }
+      .filters { position: static; }
+      .export-box { grid-template-columns: 1fr; }
+      .form-grid { grid-template-columns: 1fr; }
+      .brand span { display: none; }
+    }
+
+    @media (max-width: 520px) {
+      .kpi-grid { grid-template-columns: 1fr; }
+      .bar-row { grid-template-columns: 96px 1fr 38px; }
+      .topbar { flex-direction: column; }
+      .top-actions { justify-content: flex-start; }
+    }
+  </style>
+</head>
+<body>
+  <div class="app-shell">
+    <header class="topbar">
+      <div class="brand">
+        <div class="brand-mark">UQ</div>
+        <div>
+          <h1>University Data Quality</h1>
+          <span id="runMeta">n8n dashboard</span>
+        </div>
+      </div>
+      <div class="top-actions">
+        <button id="refreshBtn" type="button">Refresh</button>
+        <button id="exportBtn" class="primary" type="button">Download CSV</button>
+      </div>
+    </header>
+
+    <nav class="tabs" aria-label="Dashboard views">
+      <button class="tab active" type="button" data-tab="overview">Overview</button>
+      <button class="tab" type="button" data-tab="quality">Data Quality</button>
+      <button class="tab" type="button" data-tab="trust">Trust & Evidence</button>
+      <button class="tab" type="button" data-tab="review">Review Queue</button>
+      <button class="tab" type="button" data-tab="export">Export Center</button>
+    </nav>
+
+    <main>
+      <section class="kpi-grid" id="kpis"></section>
+
+      <section data-view="overview">
+        <div class="grid-3">
+          <article class="panel chart-box">
+            <div class="panel-header">
+              <div class="panel-title"><h2>Status Distribution</h2><span id="statusTotal"></span></div>
+            </div>
+            <div class="panel-body">
+              <canvas id="statusChart" height="220"></canvas>
+              <div class="legend" id="statusLegend"></div>
+            </div>
+          </article>
+          <article class="panel chart-box">
+            <div class="panel-header">
+              <div class="panel-title"><h2>Score Bands</h2></div>
+            </div>
+            <div class="panel-body">
+              <div class="bar-list" id="scoreBands"></div>
+            </div>
+          </article>
+          <article class="panel chart-box">
+            <div class="panel-header">
+              <div class="panel-title"><h2>Source Mix</h2></div>
+            </div>
+            <div class="panel-body">
+              <canvas id="sourceChart" height="220"></canvas>
+              <div class="legend" id="sourceLegend"></div>
+            </div>
+          </article>
+        </div>
+      </section>
+
+      <section data-view="quality" hidden>
+        <div class="grid-2">
+          <article class="panel">
+            <div class="panel-header">
+              <div class="panel-title"><h2>Field Completeness</h2><span id="fieldCompletenessMeta"></span></div>
+            </div>
+            <div class="panel-body">
+              <div class="heatmap" id="heatmap"></div>
+            </div>
+          </article>
+          <article class="panel">
+            <div class="panel-header">
+              <div class="panel-title"><h2>Schema & Outliers</h2></div>
+            </div>
+            <div class="panel-body">
+              <div class="bar-list" id="outliers"></div>
+              <div class="issue-list" id="schemaIssues" style="margin-top: 14px;"></div>
+            </div>
+          </article>
+        </div>
+      </section>
+
+      <section data-view="trust" hidden>
+        <div class="grid-2">
+          <article class="panel">
+            <div class="panel-header">
+              <div class="panel-title"><h2>Evidence Confidence</h2></div>
+            </div>
+            <div class="panel-body">
+              <canvas id="trustChart" height="260"></canvas>
+              <div class="legend" id="trustLegend"></div>
+            </div>
+          </article>
+          <article class="panel">
+            <div class="panel-header">
+              <div class="panel-title"><h2>Risk Flags</h2></div>
+            </div>
+            <div class="panel-body">
+              <div class="issue-list" id="riskFlags"></div>
+            </div>
+          </article>
+        </div>
+      </section>
+
+      <section class="grid-main" data-view="review" hidden>
+        <aside class="panel filters">
+          <div class="panel-header"><div class="panel-title"><h2>Filters</h2></div></div>
+          <div class="panel-body" style="display: grid; gap: 10px;">
+            <div class="filter-row">
+              <label for="searchInput">Search</label>
+              <input id="searchInput" type="search" placeholder="Name, slug, website">
+            </div>
+            <div class="filter-row">
+              <label for="countryFilter">Country code</label>
+              <select id="countryFilter"></select>
+            </div>
+            <div class="filter-row">
+              <label for="statusFilter">Quality status</label>
+              <select id="statusFilter">
+                <option value="">All</option>
+                <option>Verified</option>
+                <option>Probable</option>
+                <option>Needs Review</option>
+                <option>Risky</option>
+              </select>
+            </div>
+            <div class="filter-row">
+              <label for="scoreFilter">Score band</label>
+              <select id="scoreFilter">
+                <option value="">All</option>
+                <option value="85-100">85-100</option>
+                <option value="70-84">70-84</option>
+                <option value="45-69">45-69</option>
+                <option value="0-44">0-44</option>
+              </select>
+            </div>
+            <div class="filter-row">
+              <label for="missingFilter">Missing field</label>
+              <select id="missingFilter"></select>
+            </div>
+            <div class="filter-row">
+              <label for="sourceFilter">Source type</label>
+              <select id="sourceFilter">
+                <option value="">All</option>
+                <option value="official">Official</option>
+                <option value="wikidata">Wikidata</option>
+                <option value="wikipedia">Wikipedia</option>
+                <option value="none">None</option>
+              </select>
+            </div>
+            <div class="filter-row">
+              <label for="riskFilter">Risk filter</label>
+              <select id="riskFilter">
+                <option value="">All</option>
+                <option value="risky">Risky rows</option>
+                <option value="duplicate">Duplicate conflicts</option>
+                <option value="contact">Contact mismatch</option>
+                <option value="schema">Schema errors</option>
+              </select>
+            </div>
+            <button id="clearFiltersBtn" type="button">Clear</button>
+          </div>
+        </aside>
+
+        <article class="panel">
+          <div class="panel-header">
+            <div class="panel-title"><h2>Review Queue</h2><span id="queueCount"></span></div>
+            <div class="toolbar">
+              <select id="bulkStatus">
+                <option value="Approved">Approve selected</option>
+                <option value="Needs Review">Mark review</option>
+                <option value="Risky">Mark risky</option>
+              </select>
+              <button id="bulkApplyBtn" type="button">Apply</button>
+            </div>
+          </div>
+          <div class="panel-body">
+            <div class="table-wrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th style="width: 42px;"><input id="selectAllRows" type="checkbox" aria-label="Select all"></th>
+                    <th>Institution</th>
+                    <th>Location</th>
+                    <th>Score</th>
+                    <th>Status</th>
+                    <th>Missing</th>
+                    <th>Evidence</th>
+                    <th>Review</th>
+                    <th>Website</th>
+                    <th>Action</th>
+                  </tr>
+                </thead>
+                <tbody id="recordRows"></tbody>
+              </table>
+            </div>
+          </div>
+        </article>
+      </section>
+
+      <section data-view="export" hidden>
+        <article class="panel">
+          <div class="panel-header">
+            <div class="panel-title"><h2>Export Readiness</h2><span>University_Import_Clean.csv</span></div>
+            <div class="toolbar">
+              <button id="validateExportBtn" type="button">Revalidate</button>
+              <button id="downloadExportBtn" class="primary" type="button">Download</button>
+            </div>
+          </div>
+          <div class="panel-body">
+            <div class="export-box" id="exportMetrics"></div>
+            <div class="table-wrap" style="margin-top: 14px;">
+              <table>
+                <thead>
+                  <tr>
+                    <th>Institution</th>
+                    <th>Slug</th>
+                    <th>Score</th>
+                    <th>Status</th>
+                    <th>Review</th>
+                    <th>Blockers</th>
+                  </tr>
+                </thead>
+                <tbody id="exportRows"></tbody>
+              </table>
+            </div>
+          </div>
+        </article>
+      </section>
+    </main>
+  </div>
+
+  <div class="drawer-backdrop" id="drawerBackdrop"></div>
+  <aside class="drawer" id="recordDrawer" aria-label="Record editor">
+    <div class="drawer-header">
+      <div class="drawer-title">
+        <h3 id="drawerTitle">Record Editor</h3>
+        <div class="muted mono" id="drawerSlug"></div>
+      </div>
+      <button id="closeDrawerBtn" type="button">Close</button>
+    </div>
+    <div class="drawer-body">
+      <div class="grid-2">
+        <article class="panel">
+          <div class="panel-header"><div class="panel-title"><h2>Quality</h2></div></div>
+          <div class="panel-body" id="editorQuality"></div>
+        </article>
+        <article class="panel">
+          <div class="panel-header"><div class="panel-title"><h2>Evidence</h2></div></div>
+          <div class="panel-body"><div class="evidence-list" id="editorEvidence"></div></div>
+        </article>
+      </div>
+      <form id="recordForm" class="form-grid"></form>
+      <div class="grid-2">
+        <div class="form-field">
+          <label for="reviewStatusInput">review_status</label>
+          <select id="reviewStatusInput">
+            <option value="">Unreviewed</option>
+            <option value="Approved">Approved</option>
+            <option value="Needs Review">Needs Review</option>
+            <option value="Risky">Risky</option>
+            <option value="Rejected">Rejected</option>
+          </select>
+        </div>
+        <div class="form-field">
+          <label for="reviewerInput">reviewer</label>
+          <input id="reviewerInput" type="text" placeholder="n8n-user">
+        </div>
+        <div class="form-field full">
+          <label for="reviewNoteInput">review_note</label>
+          <textarea id="reviewNoteInput"></textarea>
+        </div>
+      </div>
+      <article class="panel">
+        <div class="panel-header"><div class="panel-title"><h2>Findings</h2></div></div>
+        <div class="panel-body"><div class="issue-list" id="editorFindings"></div></div>
+      </article>
+    </div>
+    <div class="drawer-footer">
+      <button id="rerunChecksBtn" type="button">Rerun checks</button>
+      <div class="toolbar">
+        <button id="saveRecordBtn" class="primary" type="button">Save record</button>
+      </div>
+    </div>
+  </aside>
+  <div class="toast" id="toast"></div>
+
+  <script>
+/* __QUALITY_RULES__ */
+
+const app = (() => {
+  const statusColors = {
+    Verified: "#2f7d54",
+    Probable: "#1f766f",
+    "Needs Review": "#a86f13",
+    Risky: "#b63f3a",
+  };
+  const sourceColors = {
+    official: "#2f7d54",
+    wikidata: "#6656a5",
+    wikipedia: "#1f766f",
+    source: "#a86f13",
+    none: "#b63f3a",
+  };
+  const state = {
+    payload: null,
+    records: [],
+    filtered: [],
+    selected: new Set(),
+    activeTab: "overview",
+    editing: null,
+    busy: false,
+  };
+
+  const els = {};
+  const qs = (selector) => document.querySelector(selector);
+  const qsa = (selector) => Array.from(document.querySelectorAll(selector));
+
+  function initElements() {
+    [
+      "runMeta", "refreshBtn", "exportBtn", "kpis", "statusTotal", "statusChart", "statusLegend",
+      "scoreBands", "sourceChart", "sourceLegend", "fieldCompletenessMeta", "heatmap", "outliers",
+      "schemaIssues", "trustChart", "trustLegend", "riskFlags", "searchInput", "countryFilter",
+      "statusFilter", "scoreFilter", "missingFilter", "sourceFilter", "riskFilter", "clearFiltersBtn",
+      "queueCount", "bulkStatus", "bulkApplyBtn", "selectAllRows", "recordRows", "validateExportBtn",
+      "downloadExportBtn", "exportMetrics", "exportRows", "drawerBackdrop", "recordDrawer",
+      "drawerTitle", "drawerSlug", "closeDrawerBtn", "editorQuality", "editorEvidence", "recordForm",
+      "reviewStatusInput", "reviewerInput", "reviewNoteInput", "editorFindings", "rerunChecksBtn",
+      "saveRecordBtn", "toast"
+    ].forEach((id) => { els[id] = document.getElementById(id); });
+  }
+
+  function getWebhookBase() {
+    const path = window.location.pathname;
+    const testIndex = path.indexOf("/webhook-test/");
+    if (testIndex >= 0) return `${window.location.origin}${path.slice(0, testIndex)}/webhook-test`;
+    const prodIndex = path.indexOf("/webhook/");
+    if (prodIndex >= 0) return `${window.location.origin}${path.slice(0, prodIndex)}/webhook`;
+    return `${window.location.origin}/webhook`;
+  }
+
+  function endpoints() {
+    const base = getWebhookBase();
+    return {
+      api: `${base}/university-quality-api`,
+      update: `${base}/university-record-update`,
+      bulk: `${base}/university-bulk-status`,
+      rerun: `${base}/university-rerun-checks`,
+      exportCsv: `${base}/university-csv-download`,
+    };
+  }
+
+  function escapeHtml(value) {
+    return String(value ?? "")
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;")
+      .replace(/"/g, "&quot;")
+      .replace(/'/g, "&#039;");
+  }
+
+  function toast(message) {
+    els.toast.textContent = message;
+    els.toast.classList.add("open");
+    window.clearTimeout(toast.timer);
+    toast.timer = window.setTimeout(() => els.toast.classList.remove("open"), 2600);
+  }
+
+  function statusClass(status) {
+    if (status === "Verified") return "verified";
+    if (status === "Probable") return "probable";
+    if (status === "Needs Review") return "review";
+    if (status === "Risky") return "risky";
+    return "neutral";
+  }
+
+  function setBusy(value) {
+    state.busy = value;
+    [els.refreshBtn, els.exportBtn, els.bulkApplyBtn, els.downloadExportBtn, els.saveRecordBtn, els.rerunChecksBtn]
+      .filter(Boolean)
+      .forEach((button) => { button.disabled = value; });
+  }
+
+  async function fetchJson(url, options) {
+    const response = await fetch(url, {
+      headers: { "Content-Type": "application/json", ...(options?.headers || {}) },
+      ...options,
+    });
+    if (!response.ok) throw new Error(`${response.status} ${response.statusText}`);
+    return response.json();
+  }
+
+  async function loadData() {
+    setBusy(true);
+    try {
+      const payload = await fetchJson(endpoints().api);
+      const records = Array.isArray(payload.records) ? payload.records : [];
+      state.payload = payload;
+      state.records = UniversityQuality.scoreBatch(records);
+      state.payload = UniversityQuality.aggregate(state.records);
+      state.payload.run = payload.run || payload.last_run || {};
+      state.payload.updated_at = payload.generatedAt || new Date().toISOString();
+      renderAll();
+      toast("Dashboard refreshed");
+    } catch (error) {
+      state.payload = UniversityQuality.aggregate([]);
+      state.records = [];
+      renderAll();
+      toast(`API unavailable: ${error.message}`);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  function renderAll() {
+    updateFilterOptions();
+    applyFilters();
+    renderKpis();
+    renderOverview();
+    renderQuality();
+    renderTrust();
+    renderReviewQueue();
+    renderExport();
+    const updated = state.payload?.updated_at ? new Date(state.payload.updated_at).toLocaleString() : "";
+    els.runMeta.textContent = updated ? `Last update ${updated}` : "n8n dashboard";
+  }
+
+  function updateFilterOptions() {
+    const locations = Array.from(new Set(state.records.map((record) => record.location).filter(Boolean))).sort();
+    els.countryFilter.innerHTML = `<option value="">All</option>${locations.map((code) => `<option>${escapeHtml(code)}</option>`).join("")}`;
+    els.missingFilter.innerHTML = `<option value="">All</option>${UniversityQuality.CSV_HEADERS.map((field) => `<option>${escapeHtml(field)}</option>`).join("")}`;
+  }
+
+  function kpi(label, value, meta) {
+    return `<div class="kpi"><label>${escapeHtml(label)}</label><strong>${escapeHtml(value)}</strong><small>${escapeHtml(meta || "")}</small></div>`;
+  }
+
+  function renderKpis() {
+    const s = state.payload?.summary || {};
+    els.kpis.innerHTML = [
+      kpi("Institutions", s.total || 0, "rows loaded"),
+      kpi("Countries", s.countries || 0, "numeric ISO codes"),
+      kpi("Verified", s.verified || 0, "score >= 85"),
+      kpi("Probable", s.probable || 0, "score 70-84"),
+      kpi("Needs Review", s.needs_review || 0, "manual queue"),
+      kpi("Risky", s.risky || 0, "blocked risk"),
+      kpi("Completeness", `${s.completeness_score || 0}%`, "field average"),
+      kpi("Export Ready", s.export_ready || 0, `${s.export_blocked || 0} blocked`),
+    ].join("");
+  }
+
+  function resizeCanvas(canvas) {
+    const rect = canvas.getBoundingClientRect();
+    const ratio = window.devicePixelRatio || 1;
+    canvas.width = Math.max(1, Math.floor(rect.width * ratio));
+    canvas.height = Math.max(1, Math.floor(canvas.getAttribute("height") * ratio));
+    const ctx = canvas.getContext("2d");
+    ctx.setTransform(ratio, 0, 0, ratio, 0, 0);
+    return { ctx, width: rect.width, height: Number(canvas.getAttribute("height")) };
+  }
+
+  function renderLegend(el, labels, colors) {
+    el.innerHTML = labels.map((label) => `<span class="legend-item"><i class="dot" style="background:${colors[label] || "#65736b"}"></i>${escapeHtml(label)}</span>`).join("");
+  }
+
+  function drawDonut(canvas, data, colors) {
+    const { ctx, width, height } = resizeCanvas(canvas);
+    ctx.clearRect(0, 0, width, height);
+    const entries = Object.entries(data || {}).filter(([, value]) => Number(value) > 0);
+    const total = entries.reduce((sum, [, value]) => sum + Number(value), 0);
+    const cx = width / 2;
+    const cy = height / 2;
+    const radius = Math.min(width, height) / 2 - 18;
+    if (!total) {
+      ctx.fillStyle = "#65736b";
+      ctx.font = "13px sans-serif";
+      ctx.textAlign = "center";
+      ctx.fillText("No data", cx, cy);
+      return;
+    }
+    let start = -Math.PI / 2;
+    entries.forEach(([label, value]) => {
+      const angle = (Number(value) / total) * Math.PI * 2;
+      ctx.beginPath();
+      ctx.arc(cx, cy, radius, start, start + angle);
+      ctx.arc(cx, cy, radius * 0.58, start + angle, start, true);
+      ctx.closePath();
+      ctx.fillStyle = colors[label] || "#65736b";
+      ctx.fill();
+      start += angle;
+    });
+    ctx.fillStyle = "#1d2520";
+    ctx.font = "700 26px sans-serif";
+    ctx.textAlign = "center";
+    ctx.fillText(String(total), cx, cy - 2);
+    ctx.fillStyle = "#65736b";
+    ctx.font = "12px sans-serif";
+    ctx.fillText("records", cx, cy + 18);
+  }
+
+  function drawBars(canvas, data, colors) {
+    const { ctx, width, height } = resizeCanvas(canvas);
+    ctx.clearRect(0, 0, width, height);
+    const entries = Object.entries(data || {});
+    const max = Math.max(1, ...entries.map(([, value]) => Number(value)));
+    const rowH = Math.max(32, (height - 24) / Math.max(1, entries.length));
+    ctx.font = "12px sans-serif";
+    entries.forEach(([label, value], index) => {
+      const y = 16 + index * rowH;
+      const barW = Math.max(2, ((width - 132) * Number(value)) / max);
+      ctx.fillStyle = "#65736b";
+      ctx.textAlign = "left";
+      ctx.fillText(label, 0, y + 12);
+      ctx.fillStyle = "#e9eeeb";
+      ctx.fillRect(112, y, width - 132, 14);
+      ctx.fillStyle = colors[label] || "#1f766f";
+      ctx.fillRect(112, y, barW, 14);
+      ctx.fillStyle = "#1d2520";
+      ctx.textAlign = "right";
+      ctx.fillText(String(value), width - 2, y + 12);
+    });
+  }
+
+  function renderBarList(el, data, color) {
+    const entries = Object.entries(data || {});
+    const max = Math.max(1, ...entries.map(([, value]) => Number(value)));
+    el.innerHTML = entries.map(([label, value]) => `
+      <div class="bar-row">
+        <span>${escapeHtml(label)}</span>
+        <div class="bar-track"><i class="bar-fill" style="width:${(Number(value) / max) * 100}%;background:${color || "#1f766f"}"></i></div>
+        <strong>${escapeHtml(value)}</strong>
+      </div>
+    `).join("") || `<div class="empty">No data</div>`;
+  }
+
+  function renderOverview() {
+    const charts = state.payload?.charts || {};
+    els.statusTotal.textContent = `${state.payload?.summary?.total || 0} records`;
+    drawDonut(els.statusChart, charts.status_counts || {}, statusColors);
+    renderLegend(els.statusLegend, Object.keys(statusColors), statusColors);
+    renderBarList(els.scoreBands, charts.score_bands || {}, "#6656a5");
+    drawBars(els.sourceChart, charts.source_mix || {}, sourceColors);
+    renderLegend(els.sourceLegend, Object.keys(sourceColors), sourceColors);
+  }
+
+  function heatColor(pct) {
+    if (pct >= 90) return "#2f7d54";
+    if (pct >= 70) return "#1f766f";
+    if (pct >= 45) return "#a86f13";
+    return "#b63f3a";
+  }
+
+  function renderQuality() {
+    const fields = state.payload?.fieldCompleteness || {};
+    const total = state.payload?.summary?.total || 0;
+    els.fieldCompletenessMeta.textContent = `${total} records`;
+    els.heatmap.innerHTML = Object.entries(fields).map(([field, item]) => `
+      <div class="heat-cell">
+        <strong>${escapeHtml(field)}</strong>
+        <div class="heat-rail"><i style="width:${item.pct || 0}%;background:${heatColor(item.pct || 0)}"></i></div>
+        <span>${item.pct || 0}% present, ${item.missing || 0} missing</span>
+      </div>
+    `).join("") || `<div class="empty">No fields</div>`;
+    renderBarList(els.outliers, state.payload?.charts?.numeric_outliers || {}, "#a86f13");
+    const issues = (state.payload?.findings || [])
+      .filter((finding) => finding.rule_id.startsWith("csv.") || finding.rule_id.startsWith("outlier."))
+      .slice(0, 60);
+    renderIssues(els.schemaIssues, issues);
+  }
+
+  function renderTrust() {
+    const truth = state.payload?.charts?.status_counts || {};
+    drawBars(els.trustChart, truth, statusColors);
+    renderLegend(els.trustLegend, Object.keys(statusColors), statusColors);
+    const flags = (state.payload?.findings || [])
+      .filter((finding) => finding.rule_id.includes("contact.") || finding.rule_id.includes("duplicate.") || finding.rule_id.includes("evidence."))
+      .slice(0, 80);
+    renderIssues(els.riskFlags, flags);
+  }
+
+  function renderIssues(el, issues) {
+    if (!issues.length) {
+      el.innerHTML = `<div class="empty">No issues</div>`;
+      return;
+    }
+    el.innerHTML = issues.map((issue) => `
+      <div class="issue ${escapeHtml(issue.severity || "minor")}">
+        <strong>${escapeHtml(issue.severity || "")} · ${escapeHtml(issue.rule_id || "")}</strong>
+        <span>${escapeHtml(issue.name || issue.field || "")}</span>
+        <span>${escapeHtml(issue.message || "")}</span>
+      </div>
+    `).join("");
+  }
+
+  function applyFilters() {
+    const text = els.searchInput?.value.trim().toLowerCase() || "";
+    const country = els.countryFilter?.value || "";
+    const status = els.statusFilter?.value || "";
+    const scoreBand = els.scoreFilter?.value || "";
+    const missing = els.missingFilter?.value || "";
+    const source = els.sourceFilter?.value || "";
+    const risk = els.riskFilter?.value || "";
+
+    state.filtered = state.records.filter((record) => {
+      if (text) {
+        const haystack = `${record.name} ${record.slug} ${record.website} ${record.admissions_contact}`.toLowerCase();
+        if (!haystack.includes(text)) return false;
+      }
+      if (country && record.location !== country) return false;
+      if (status && record.quality_status !== status) return false;
+      if (scoreBand) {
+        const [min, max] = scoreBand.split("-").map(Number);
+        if (record.quality_score < min || record.quality_score > max) return false;
+      }
+      if (missing && record[missing]) return false;
+      if (source) {
+        const types = new Set((record.evidence_links || []).map((entry) => entry.type));
+        if (source === "none" && types.size) return false;
+        if (source !== "none" && !types.has(source)) return false;
+      }
+      if (risk) {
+        const flags = record.risky_flags || [];
+        if (risk === "risky" && record.quality_status !== "Risky") return false;
+        if (risk === "duplicate" && !flags.some((flag) => flag.includes("duplicate"))) return false;
+        if (risk === "contact" && !flags.some((flag) => flag.includes("contact"))) return false;
+        if (risk === "schema" && !record.critical_count) return false;
+      }
+      return true;
+    });
+  }
+
+  function missingCount(record) {
+    return UniversityQuality.CSV_HEADERS.filter((field) => !record[field] && !["id", "global_rank", "contact_person"].includes(field)).length;
+  }
+
+  function evidenceLabel(record) {
+    const types = Array.from(new Set((record.evidence_links || []).map((entry) => entry.type)));
+    return types.length ? types.join(", ") : "none";
+  }
+
+  function renderReviewQueue() {
+    applyFilters();
+    els.queueCount.textContent = `${state.filtered.length} shown`;
+    if (!state.filtered.length) {
+      els.recordRows.innerHTML = `<tr><td colspan="10"><div class="empty">No matching records</div></td></tr>`;
+      return;
+    }
+    els.recordRows.innerHTML = state.filtered.map((record) => `
+      <tr>
+        <td><input type="checkbox" class="row-check" data-id="${escapeHtml(record.slug)}" ${state.selected.has(record.slug) ? "checked" : ""}></td>
+        <td class="name-cell"><strong>${escapeHtml(record.name)}</strong><br><span class="muted mono">${escapeHtml(record.slug)}</span></td>
+        <td>${escapeHtml(record.location)}</td>
+        <td class="score">${escapeHtml(record.quality_score)}</td>
+        <td><span class="pill ${statusClass(record.quality_status)}">${escapeHtml(record.quality_status)}</span></td>
+        <td>${missingCount(record)}</td>
+        <td>${escapeHtml(evidenceLabel(record))}</td>
+        <td><span class="pill neutral">${escapeHtml(record.review_status || "Unreviewed")}</span></td>
+        <td>${record.website ? `<a href="${escapeHtml(record.website)}" target="_blank" rel="noreferrer">open</a>` : `<span class="muted">blank</span>`}</td>
+        <td><button type="button" class="edit-row" data-id="${escapeHtml(record.slug)}">Edit</button></td>
+      </tr>
+    `).join("");
+  }
+
+  function renderExport() {
+    const check = UniversityQuality.validateExport(state.records);
+    els.exportMetrics.innerHTML = [
+      `<div class="metric"><label>Header order</label><strong>${check.headerOk ? "Valid" : "Invalid"}</strong></div>`,
+      `<div class="metric"><label>Exportable rows</label><strong>${check.exportable.length}</strong></div>`,
+      `<div class="metric"><label>Blocked rows</label><strong>${check.blocked.length}</strong></div>`,
+    ].join("");
+    const rows = [...check.exportable.map((record) => ({ ...record, blockers: "" })), ...check.blocked.map((record) => ({ ...record, blockers: `${record.critical_count} critical, ${record.review_status || "Unreviewed"}` }))];
+    els.exportRows.innerHTML = rows.slice(0, 200).map((record) => `
+      <tr>
+        <td class="name-cell">${escapeHtml(record.name)}</td>
+        <td class="mono">${escapeHtml(record.slug)}</td>
+        <td class="score">${escapeHtml(record.quality_score)}</td>
+        <td><span class="pill ${statusClass(record.quality_status)}">${escapeHtml(record.quality_status)}</span></td>
+        <td>${escapeHtml(record.review_status || "Unreviewed")}</td>
+        <td>${escapeHtml(record.blockers || "ready")}</td>
+      </tr>
+    `).join("") || `<tr><td colspan="6"><div class="empty">No rows</div></td></tr>`;
+  }
+
+  function switchTab(tab) {
+    state.activeTab = tab;
+    qsa(".tab").forEach((button) => button.classList.toggle("active", button.dataset.tab === tab));
+    qsa("[data-view]").forEach((view) => { view.hidden = view.dataset.view !== tab; });
+    window.requestAnimationFrame(() => {
+      renderOverview();
+      renderQuality();
+      renderTrust();
+    });
+  }
+
+  function openEditor(slug) {
+    const record = state.records.find((item) => item.slug === slug);
+    if (!record) return;
+    state.editing = record;
+    els.drawerTitle.textContent = record.name || "Record Editor";
+    els.drawerSlug.textContent = record.slug || "";
+    els.editorQuality.innerHTML = `
+      <div class="export-box" style="grid-template-columns: repeat(2, minmax(0, 1fr));">
+        <div class="metric"><label>Score</label><strong>${record.quality_score}</strong></div>
+        <div class="metric"><label>Status</label><strong>${record.quality_status}</strong></div>
+      </div>
+      <div class="bar-list" style="margin-top: 12px;">
+        ${Object.entries(record.score_components || {}).map(([label, value]) => `
+          <div class="bar-row">
+            <span>${escapeHtml(label)}</span>
+            <div class="bar-track"><i class="bar-fill" style="width:${Number(value)}%;background:${heatColor(Number(value) * 5)}"></i></div>
+            <strong>${escapeHtml(value)}</strong>
+          </div>
+        `).join("")}
+      </div>
+    `;
+    els.editorEvidence.innerHTML = (record.evidence_links || []).map((entry) => `
+      <a href="${escapeHtml(entry.url)}" target="_blank" rel="noreferrer">${escapeHtml(entry.type)}: ${escapeHtml(entry.url)}</a>
+    `).join("") || `<span class="muted">No evidence links</span>`;
+    els.recordForm.innerHTML = UniversityQuality.CSV_HEADERS.map((field) => {
+      const full = ["description", "campus_student_life", "financials", "admissions_page_link"].includes(field) ? " full" : "";
+      const value = record[field] ?? "";
+      const input = ["description", "campus_student_life"].includes(field)
+        ? `<textarea name="${field}">${escapeHtml(value)}</textarea>`
+        : `<input name="${field}" value="${escapeHtml(value)}">`;
+      return `<div class="form-field${full}"><label>${escapeHtml(field)}</label>${input}</div>`;
+    }).join("");
+    els.reviewStatusInput.value = record.review_status || "";
+    els.reviewerInput.value = record.reviewer || "";
+    els.reviewNoteInput.value = "";
+    renderIssues(els.editorFindings, record.findings || []);
+    els.drawerBackdrop.classList.add("open");
+    els.recordDrawer.classList.add("open");
+  }
+
+  function closeEditor() {
+    els.drawerBackdrop.classList.remove("open");
+    els.recordDrawer.classList.remove("open");
+    state.editing = null;
+  }
+
+  function collectEditorUpdates() {
+    const data = {};
+    new FormData(els.recordForm).forEach((value, key) => { data[key] = String(value).trim(); });
+    data.review_status = els.reviewStatusInput.value;
+    data.reviewer = els.reviewerInput.value.trim();
+    return data;
+  }
+
+  async function saveRecord() {
+    if (!state.editing) return;
+    const updates = collectEditorUpdates();
+    setBusy(true);
+    try {
+      await fetchJson(endpoints().update, {
+        method: "POST",
+        body: JSON.stringify({
+          slug: state.editing.slug,
+          updates,
+          note: els.reviewNoteInput.value.trim(),
+        }),
+      });
+      const index = state.records.findIndex((record) => record.slug === state.editing.slug);
+      if (index >= 0) state.records[index] = UniversityQuality.scoreRecord({ ...state.records[index], ...updates });
+      state.payload = UniversityQuality.aggregate(state.records);
+      closeEditor();
+      renderAll();
+      toast("Record saved");
+    } catch (error) {
+      toast(`Save failed: ${error.message}`);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function bulkApply() {
+    const ids = Array.from(state.selected);
+    if (!ids.length) {
+      toast("No rows selected");
+      return;
+    }
+    const status = els.bulkStatus.value;
+    setBusy(true);
+    try {
+      await fetchJson(endpoints().bulk, {
+        method: "POST",
+        body: JSON.stringify({ slugs: ids, review_status: status, note: `Bulk ${status}` }),
+      });
+      state.records = state.records.map((record) => ids.includes(record.slug) ? UniversityQuality.scoreRecord({ ...record, review_status: status }) : record);
+      state.selected.clear();
+      state.payload = UniversityQuality.aggregate(state.records);
+      renderAll();
+      toast("Bulk action applied");
+    } catch (error) {
+      toast(`Bulk action failed: ${error.message}`);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  function downloadCsv() {
+    window.location.href = endpoints().exportCsv;
+  }
+
+  function bindEvents() {
+    qsa(".tab").forEach((button) => button.addEventListener("click", () => switchTab(button.dataset.tab)));
+    els.refreshBtn.addEventListener("click", loadData);
+    els.exportBtn.addEventListener("click", downloadCsv);
+    els.downloadExportBtn.addEventListener("click", downloadCsv);
+    els.validateExportBtn.addEventListener("click", () => { renderExport(); toast("Export revalidated"); });
+    [els.searchInput, els.countryFilter, els.statusFilter, els.scoreFilter, els.missingFilter, els.sourceFilter, els.riskFilter]
+      .forEach((input) => input.addEventListener("input", renderReviewQueue));
+    els.clearFiltersBtn.addEventListener("click", () => {
+      [els.searchInput, els.countryFilter, els.statusFilter, els.scoreFilter, els.missingFilter, els.sourceFilter, els.riskFilter]
+        .forEach((input) => { input.value = ""; });
+      renderReviewQueue();
+    });
+    els.recordRows.addEventListener("change", (event) => {
+      if (!event.target.classList.contains("row-check")) return;
+      const id = event.target.dataset.id;
+      if (event.target.checked) state.selected.add(id);
+      else state.selected.delete(id);
+    });
+    els.recordRows.addEventListener("click", (event) => {
+      const button = event.target.closest(".edit-row");
+      if (button) openEditor(button.dataset.id);
+    });
+    els.selectAllRows.addEventListener("change", () => {
+      if (els.selectAllRows.checked) state.filtered.forEach((record) => state.selected.add(record.slug));
+      else state.filtered.forEach((record) => state.selected.delete(record.slug));
+      renderReviewQueue();
+    });
+    els.bulkApplyBtn.addEventListener("click", bulkApply);
+    els.closeDrawerBtn.addEventListener("click", closeEditor);
+    els.drawerBackdrop.addEventListener("click", closeEditor);
+    els.saveRecordBtn.addEventListener("click", saveRecord);
+    els.rerunChecksBtn.addEventListener("click", () => {
+      if (!state.editing) return;
+      const updates = collectEditorUpdates();
+      const rescored = UniversityQuality.scoreRecord({ ...state.editing, ...updates });
+      state.editing = rescored;
+      renderIssues(els.editorFindings, rescored.findings || []);
+      toast("Checks rerun");
+    });
+    window.addEventListener("resize", () => {
+      renderOverview();
+      renderTrust();
+    });
+  }
+
+  function start() {
+    initElements();
+    bindEvents();
+    loadData();
+  }
+
+  return { start };
+})();
+
+document.addEventListener("DOMContentLoaded", app.start);
+  </script>
+</body>
+</html>

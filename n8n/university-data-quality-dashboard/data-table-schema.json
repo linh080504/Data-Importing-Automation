@@ -1,0 +1,320 @@
+{
+  "university_import_runs": [
+    {
+      "name": "run_id",
+      "type": "string"
+    },
+    {
+      "name": "started_at",
+      "type": "datetime"
+    },
+    {
+      "name": "finished_at",
+      "type": "datetime"
+    },
+    {
+      "name": "countries",
+      "type": "string"
+    },
+    {
+      "name": "country_count",
+      "type": "number"
+    },
+    {
+      "name": "institution_count",
+      "type": "number"
+    },
+    {
+      "name": "quality_summary_json",
+      "type": "string"
+    },
+    {
+      "name": "output_file",
+      "type": "string"
+    },
+    {
+      "name": "status",
+      "type": "string"
+    }
+  ],
+  "university_records": [
+    {
+      "name": "id",
+      "type": "string"
+    },
+    {
+      "name": "name",
+      "type": "string"
+    },
+    {
+      "name": "location",
+      "type": "string"
+    },
+    {
+      "name": "description",
+      "type": "string"
+    },
+    {
+      "name": "slug",
+      "type": "string"
+    },
+    {
+      "name": "sponsored",
+      "type": "string"
+    },
+    {
+      "name": "website",
+      "type": "string"
+    },
+    {
+      "name": "global_rank",
+      "type": "string"
+    },
+    {
+      "name": "financials",
+      "type": "string"
+    },
+    {
+      "name": "student_loan_available",
+      "type": "string"
+    },
+    {
+      "name": "campus_student_life",
+      "type": "string"
+    },
+    {
+      "name": "number_of_students",
+      "type": "string"
+    },
+    {
+      "name": "student_to_faculty_ratio",
+      "type": "string"
+    },
+    {
+      "name": "international_student_ratio",
+      "type": "string"
+    },
+    {
+      "name": "housing_availability",
+      "type": "string"
+    },
+    {
+      "name": "admissions_contact",
+      "type": "string"
+    },
+    {
+      "name": "admissions_phone",
+      "type": "string"
+    },
+    {
+      "name": "contact_person",
+      "type": "string"
+    },
+    {
+      "name": "admissions_page_link",
+      "type": "string"
+    },
+    {
+      "name": "immigration_support",
+      "type": "string"
+    },
+    {
+      "name": "university_campuses",
+      "type": "string"
+    },
+    {
+      "name": "country_name",
+      "type": "string"
+    },
+    {
+      "name": "quality_score",
+      "type": "number"
+    },
+    {
+      "name": "quality_status",
+      "type": "string"
+    },
+    {
+      "name": "truth_status",
+      "type": "string"
+    },
+    {
+      "name": "review_status",
+      "type": "string"
+    },
+    {
+      "name": "export_ready",
+      "type": "boolean"
+    },
+    {
+      "name": "source_url",
+      "type": "string"
+    },
+    {
+      "name": "wikipedia_url",
+      "type": "string"
+    },
+    {
+      "name": "wikidata_url",
+      "type": "string"
+    },
+    {
+      "name": "official_url",
+      "type": "string"
+    },
+    {
+      "name": "evidence_urls",
+      "type": "string"
+    },
+    {
+      "name": "score_components_json",
+      "type": "string"
+    },
+    {
+      "name": "risky_flags_json",
+      "type": "string"
+    },
+    {
+      "name": "finding_count",
+      "type": "number"
+    },
+    {
+      "name": "critical_count",
+      "type": "number"
+    },
+    {
+      "name": "major_count",
+      "type": "number"
+    },
+    {
+      "name": "run_id",
+      "type": "string"
+    },
+    {
+      "name": "created_at",
+      "type": "datetime"
+    },
+    {
+      "name": "updated_at",
+      "type": "datetime"
+    },
+    {
+      "name": "reviewed_at",
+      "type": "datetime"
+    },
+    {
+      "name": "reviewer",
+      "type": "string"
+    }
+  ],
+  "university_quality_findings": [
+    {
+      "name": "finding_id",
+      "type": "string"
+    },
+    {
+      "name": "run_id",
+      "type": "string"
+    },
+    {
+      "name": "slug",
+      "type": "string"
+    },
+    {
+      "name": "name",
+      "type": "string"
+    },
+    {
+      "name": "field",
+      "type": "string"
+    },
+    {
+      "name": "severity",
+      "type": "string"
+    },
+    {
+      "name": "rule_id",
+      "type": "string"
+    },
+    {
+      "name": "message",
+      "type": "string"
+    },
+    {
+      "name": "evidence_url",
+      "type": "string"
+    },
+    {
+      "name": "created_at",
+      "type": "datetime"
+    }
+  ],
+  "university_review_audit": [
+    {
+      "name": "audit_id",
+      "type": "string"
+    },
+    {
+      "name": "target_slug",
+      "type": "string"
+    },
+    {
+      "name": "user",
+      "type": "string"
+    },
+    {
+      "name": "action",
+      "type": "string"
+    },
+    {
+      "name": "timestamp",
+      "type": "datetime"
+    },
+    {
+      "name": "before_values",
+      "type": "string"
+    },
+    {
+      "name": "after_values",
+      "type": "string"
+    },
+    {
+      "name": "notes",
+      "type": "string"
+    }
+  ],
+  "country_crawl_state": [
+    {
+      "name": "country_name",
+      "type": "string"
+    },
+    {
+      "name": "country_code",
+      "type": "number"
+    },
+    {
+      "name": "list_page_title",
+      "type": "string"
+    },
+    {
+      "name": "source_url",
+      "type": "string"
+    },
+    {
+      "name": "last_run_id",
+      "type": "string"
+    },
+    {
+      "name": "last_offset",
+      "type": "number"
+    },
+    {
+      "name": "status",
+      "type": "string"
+    },
+    {
+      "name": "updated_at",
+      "type": "datetime"
+    }
+  ]
+}

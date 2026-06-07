@@ -1,0 +1,214 @@
+{
+  "name": "University Record Update",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "university-record-update",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "39234b07-504a-5dde-88e1-c403f27d4814",
+      "name": "POST /university-record-update",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        0,
+        0
+      ],
+      "webhookId": "e364b10f-e924-5a46-9f18-4cd37f6f"
+    },
+    {
+      "parameters": {
+        "jsCode": "\nconst body = $json.body || {};\nconst updates = body.updates || {};\nconst slug = body.slug || updates.slug || body.record_id;\nif (!slug) throw new Error(\"slug is required.\");\nconst now = new Date().toISOString();\nreturn [{\n  json: {\n    ...updates,\n    slug,\n    review_status: updates.review_status || body.review_status || \"\",\n    reviewer: updates.reviewer || body.user || \"n8n\",\n    reviewed_at: now,\n    updated_at: now,\n    _note: body.note || \"\",\n    _before: body.before || {},\n  },\n}];\n"
+      },
+      "id": "9cd63df6-e27d-55b9-9f10-3388e0ea124c",
+      "name": "Prepare Record Update",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        260,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "resource": "row",
+        "operation": "update",
+        "dataTableId": {
+          "__rl": true,
+          "value": "university_records",
+          "mode": "name",
+          "cachedResultName": "university_records"
+        },
+        "matchType": "allConditions",
+        "filters": {
+          "conditions": [
+            {
+              "keyName": "slug",
+              "condition": "eq",
+              "keyValue": "={{ $json.slug }}"
+            }
+          ]
+        },
+        "columns": {
+          "mappingMode": "autoMapInputData",
+          "value": {},
+          "matchingColumns": [],
+          "schema": [],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        }
+      },
+      "id": "d1dee195-fe7d-5444-b9e2-19010c1d5178",
+      "name": "Update university_records",
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1.1,
+      "position": [
+        520,
+        -120
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "\nconst row = $json;\nconst after = { ...row };\ndelete after._note;\ndelete after._before;\nreturn [{\n  json: {\n    audit_id: `audit-${Date.now()}-${row.slug}`,\n    target_slug: row.slug,\n    user: row.reviewer || \"n8n\",\n    action: \"record_update\",\n    timestamp: new Date().toISOString(),\n    before_values: JSON.stringify(row._before || {}),\n    after_values: JSON.stringify(after),\n    notes: row._note || \"\",\n  },\n}];\n"
+      },
+      "id": "4ea270c7-16e2-5d73-a5fe-0cc463dfb697",
+      "name": "Build Audit Row",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        520,
+        120
+      ]
+    },
+    {
+      "parameters": {
+        "resource": "row",
+        "operation": "insert",
+        "dataTableId": {
+          "__rl": true,
+          "value": "university_review_audit",
+          "mode": "name",
+          "cachedResultName": "university_review_audit"
+        },
+        "columns": {
+          "mappingMode": "autoMapInputData",
+          "value": {},
+          "matchingColumns": [],
+          "schema": [],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        }
+      },
+      "id": "39399661-efaa-55f8-8816-281ec96a9cf8",
+      "name": "Insert university_review_audit",
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1.1,
+      "position": [
+        780,
+        120
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "\nreturn [{ json: { ok: true, action: \"record_update\", slug: $json.target_slug, timestamp: $json.timestamp } }];\n"
+      },
+      "id": "adf02e86-b074-53ee-9c1c-650b41f26388",
+      "name": "Build Update Response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1040,
+        120
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ $json }}",
+        "options": {
+          "responseCode": 200
+        }
+      },
+      "id": "869f9100-f1f4-5ce4-8858-d4755dbaeb85",
+      "name": "Return Update JSON",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.4,
+      "position": [
+        1300,
+        120
+      ]
+    }
+  ],
+  "connections": {
+    "POST /university-record-update": {
+      "main": [
+        [
+          {
+            "node": "Prepare Record Update",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Record Update": {
+      "main": [
+        [
+          {
+            "node": "Update university_records",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Build Audit Row",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Audit Row": {
+      "main": [
+        [
+          {
+            "node": "Insert university_review_audit",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Insert university_review_audit": {
+      "main": [
+        [
+          {
+            "node": "Build Update Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Update Response": {
+      "main": [
+        [
+          {
+            "node": "Return Update JSON",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "pinData": {},
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "staticData": null,
+  "meta": {
+    "templateCredsSetupCompleted": true
+  }
+}
