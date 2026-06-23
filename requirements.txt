@@ -1,0 +1,11 @@
+Django>=5.0
+requests>=2.31
+beautifulsoup4>=4.12
+
+# Gemini grounded enrichment (build_country_gemini): fills the required
+# university fields from Google-Search-grounded answers with source URLs.
+google-genai>=1.0
+
+# Optional: Scrapling DynamicFetcher fallback for JS-rendered sites
+# (crawl_country --dynamic). Needs browsers: `scrapling install`.
+# scrapling[all]>=0.4.9

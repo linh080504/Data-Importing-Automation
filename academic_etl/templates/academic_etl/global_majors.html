@@ -1,0 +1,117 @@
+{% extends "academic_etl/base.html" %}
+{% block title %}Majors Workspace{% endblock %}
+{% block content %}
+<section class="page-head">
+  <div>
+    <p class="eyebrow">Global Workspace</p>
+    <h1 class="page-title">Majors / Programs</h1>
+    <p class="lede">All staged programs across all pipeline runs. {{ total_count }} total records.</p>
+  </div>
+  <div class="toolbar">
+    <a class="btn btn-ghost" href="{% url 'academic_etl:dashboard' %}">Dashboard</a>
+  </div>
+</section>
+
+<form class="filter-form" method="get">
+  <div style="grid-column:span 2">
+    <label>Search</label>
+    <input type="text" name="q" value="{{ q }}" placeholder="Major name, university...">
+  </div>
+  <div>
+    <label>Country</label>
+    <select name="country">
+      <option value="">All countries</option>
+      {% for c in countries %}
+        <option value="{{ c }}" {% if c == country %}selected{% endif %}>{{ c }}</option>
+      {% endfor %}
+    </select>
+  </div>
+  <div>
+    <label>Degree Level</label>
+    <select name="degree">
+      <option value="">All</option>
+      {% for val, label in degree_choices %}
+        <option value="{{ val }}" {% if val == degree %}selected{% endif %}>{{ label }}</option>
+      {% endfor %}
+    </select>
+  </div>
+  <div>
+    <label>Validation</label>
+    <select name="validation">
+      <option value="">All</option>
+      {% for val, label in validation_choices %}
+        <option value="{{ val }}" {% if val == validation %}selected{% endif %}>{{ label }}</option>
+      {% endfor %}
+    </select>
+  </div>
+  <div class="action-row">
+    <button class="btn btn-blue" type="submit">Apply</button>
+    <a class="btn btn-ghost" href="{% url 'academic_etl:global_majors' %}">Reset</a>
+  </div>
+</form>
+
+<section class="panel">
+  <div class="panel-head">
+    <h2>Programs</h2>
+    <span class="badge b-discovered">{{ page.paginator.count }} results</span>
+  </div>
+  <div class="table-wrap">
+    <table class="data-table">
+      <tr>
+        <th>University</th>
+        <th>Country</th>
+        <th>Major / Program</th>
+        <th>Degree Level</th>
+        <th>Faculty / School</th>
+        <th>Field of Study</th>
+        <th>Confidence</th>
+        <th>Validation</th>
+        <th>Review</th>
+        <th>Actions</th>
+      </tr>
+      {% for p in page %}
+      <tr>
+        <td>
+          {% if p.extracted_university %}
+            <a href="{% url 'academic_etl:university_detail' p.extracted_university.pk %}">{{ p.extracted_university.name|truncatechars:40 }}</a>
+          {% else %}
+            <span class="mut">—</span>
+          {% endif %}
+        </td>
+        <td class="nowrap mut">{{ p.country }} {{ p.country_code }}</td>
+        <td>
+          <a href="{% url 'academic_etl:program_detail' p.pk %}"><strong>{{ p.program_name|truncatechars:55 }}</strong></a>
+        </td>
+        <td><span class="badge b-{{ p.degree_level }}">{{ p.degree_level }}</span></td>
+        <td class="mut truncate" style="max-width:150px">{{ p.faculty_or_school|default:"—" }}</td>
+        <td class="mut truncate" style="max-width:120px">{{ p.field_of_study|default:"—" }}</td>
+        <td>
+          <div class="score">
+            <span>{{ p.confidence_score|floatformat:2 }}</span>
+            <div class="progress {% if p.confidence_score >= 0.75 %}ok{% elif p.confidence_score >= 0.5 %}warn{% else %}bad{% endif %}">
+              <span style="width:{% widthratio p.confidence_score 1 100 %}%"></span>
+            </div>
+          </div>
+        </td>
+        <td><span class="badge b-{{ p.validation_status }}">{{ p.validation_status }}</span></td>
+        <td><span class="badge b-{{ p.review_status }}">{{ p.review_status }}</span></td>
+        <td><a class="btn btn-grey" href="{% url 'academic_etl:program_detail' p.pk %}">Review</a></td>
+      </tr>
+      {% empty %}
+      <tr><td colspan="10" class="mut">No programs found. Start a pipeline run from the dashboard.</td></tr>
+      {% endfor %}
+    </table>
+  </div>
+  {% if page.has_other_pages %}
+  <div style="padding:14px;display:flex;gap:8px;justify-content:center;align-items:center">
+    {% if page.has_previous %}
+      <a class="btn btn-grey" href="?page={{ page.previous_page_number }}&q={{ q }}&country={{ country }}&degree={{ degree }}&validation={{ validation }}">Previous</a>
+    {% endif %}
+    <span class="mut">Page {{ page.number }} of {{ page.paginator.num_pages }}</span>
+    {% if page.has_next %}
+      <a class="btn btn-grey" href="?page={{ page.next_page_number }}&q={{ q }}&country={{ country }}&degree={{ degree }}&validation={{ validation }}">Next</a>
+    {% endif %}
+  </div>
+  {% endif %}
+</section>
+{% endblock %}

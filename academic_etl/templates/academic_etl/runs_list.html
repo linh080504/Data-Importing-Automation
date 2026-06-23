@@ -1,0 +1,67 @@
+{% extends "academic_etl/base.html" %}
+{% block title %}Pipeline Runs{% endblock %}
+{% block extra_head %}{% if auto_refresh %}<meta http-equiv="refresh" content="10">{% endif %}{% endblock %}
+{% block content %}
+<section class="page-head">
+  <div>
+    <p class="eyebrow">Batch History</p>
+    <h1 class="page-title">Pipeline runs</h1>
+    <p class="lede">Audit each country crawl from discovery through validation, review and import.</p>
+  </div>
+  <a class="btn btn-blue" href="{% url 'academic_etl:dashboard' %}">Dashboard</a>
+</section>
+
+<section class="panel">
+  <div class="panel-head">
+    <h2>Runs</h2>
+    <span class="badge b-unknown">{{ runs|length }} shown</span>
+  </div>
+  <div class="table-wrap">
+    <table class="data-table">
+      <tr>
+        <th>#</th><th>Country</th><th>Pipeline state</th>
+        <th class="num">Seeds</th><th class="num">Pages</th><th class="num">Universities</th>
+        <th class="num">Majors</th><th class="num">Clean</th><th>Error</th><th>Created</th><th>Actions</th>
+      </tr>
+      {% for run in runs %}
+      <tr>
+        <td class="mono"><a href="{% url 'academic_etl:run_detail' run.pk %}">#{{ run.pk }}</a></td>
+        <td>
+          <strong>{{ run.country_name }} {{ run.country_code }}</strong>
+          <div class="mut mono">{{ run.progress.execution_mode|title }} | {{ run.seed_provider }}</div>
+        </td>
+        <td class="status-cell">
+          <span class="badge b-{{ run.status }}">{{ run.progress.phase_label }}</span>
+          <div class="mut">backend status: <span class="mono">{{ run.status }}</span></div>
+          <div class="progress {% if run.progress.tone == 'ok' %}ok{% elif run.progress.tone == 'bad' %}bad{% elif run.progress.tone == 'warn' %}warn{% endif %}">
+            <span style="width:{{ run.progress.progress_pct }}%"></span>
+          </div>
+          <div class="mut mono">{{ run.progress.coverage_detail }}</div>
+          {% if run.progress.last_heartbeat %}<div class="mut mono">heartbeat {{ run.progress.last_heartbeat|date:"H:i:s" }}{% if run.progress.retry_count %} | retry {{ run.progress.retry_count }}/3{% endif %}</div>{% endif %}
+        </td>
+        <td class="num">{{ run.progress.total_seeds }}</td>
+        <td class="num">{{ run.progress.pages }}</td>
+        <td class="num">{{ run.progress.universities }}</td>
+        <td class="num"><strong>{{ run.progress.majors }}</strong></td>
+        <td class="num">{{ run.progress.clean_total }}</td>
+        <td class="mut truncate">{{ run.error_message|truncatechars:80 }}</td>
+        <td class="mut nowrap">{{ run.created_at|date:"Y-m-d H:i" }}</td>
+        <td>
+          <div class="row-actions">
+            <a class="btn btn-blue" href="{% url 'academic_etl:run_detail' run.pk %}">Open</a>
+            <a class="btn btn-grey" href="{% url 'academic_etl:universities_list' run.pk %}">Universities</a>
+            <a class="btn btn-grey" href="{% url 'academic_etl:majors_list' run.pk %}">Majors</a>
+            <form method="post" action="{% url 'academic_etl:run_delete_action' run.pk %}" style="display:inline" onsubmit="return confirm('Xóa run #{{ run.pk }} và toàn bộ dữ liệu? Không thể hoàn tác.');">
+              {% csrf_token %}
+              <button class="btn btn-bad" type="submit">🗑 Delete</button>
+            </form>
+          </div>
+        </td>
+      </tr>
+      {% empty %}
+        <tr><td colspan="11" class="mut">No runs.</td></tr>
+      {% endfor %}
+    </table>
+  </div>
+</section>
+{% endblock %}

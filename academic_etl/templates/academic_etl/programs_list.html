@@ -1,0 +1,130 @@
+{% extends "academic_etl/base.html" %}
+{% block title %}Major Catalog - Run #{{ run.pk }}{% endblock %}
+{% block content %}
+<section class="page-head">
+  <div>
+    <p class="eyebrow">Major Catalog</p>
+    <h1 class="page-title">Major Catalog - Run #{{ run.pk }}</h1>
+    <p class="lede">One university can have many majors. This staging table keeps university name, major name, major URL, source URL and review evidence together.</p>
+  </div>
+  <div class="toolbar">
+    <a class="btn btn-grey" href="{% url 'academic_etl:run_detail' run.pk %}">Run detail</a>
+    <a class="btn btn-cyan" href="{% url 'academic_etl:clean_majors' run.pk %}">Clean majors</a>
+    <a class="btn btn-blue" href="{% url 'academic_etl:universities_list' run.pk %}">Universities</a>
+  </div>
+</section>
+
+<form method="get" class="filter-form">
+  <div class="wide">
+    <label>Search</label>
+    <input type="text" name="q" value="{{ filters.q }}" placeholder="major, university, URL, field">
+  </div>
+  <div>
+    <label>University</label>
+    <input type="text" name="university" value="{{ filters.university }}" placeholder="name or id">
+  </div>
+  <div>
+    <label>Degree</label>
+    <select name="degree_level">
+      <option value="">all</option>
+      {% for value, label in degree_level_choices %}<option value="{{ value }}" {% if filters.degree_level == value %}selected{% endif %}>{{ value }}</option>{% endfor %}
+    </select>
+  </div>
+  <div>
+    <label>Validation</label>
+    <select name="validation">
+      <option value="">all</option>
+      {% for value, label in validation_choices %}<option value="{{ value }}" {% if filters.validation == value %}selected{% endif %}>{{ value }}</option>{% endfor %}
+    </select>
+  </div>
+  <div>
+    <label>Review</label>
+    <select name="review">
+      <option value="">all</option>
+      {% for value, label in review_choices %}<option value="{{ value }}" {% if filters.review == value %}selected{% endif %}>{{ value }}</option>{% endfor %}
+    </select>
+  </div>
+  <div>
+    <label>Higher-ed</label>
+    <select name="higher_ed">
+      <option value="">all</option>
+      <option value="yes" {% if filters.higher_ed == "yes" %}selected{% endif %}>yes</option>
+      <option value="no" {% if filters.higher_ed == "no" %}selected{% endif %}>no</option>
+      <option value="uncertain" {% if filters.higher_ed == "uncertain" %}selected{% endif %}>uncertain</option>
+    </select>
+  </div>
+  <div>
+    <label>Major URL</label>
+    <select name="has_url">
+      <option value="">all</option>
+      <option value="yes" {% if filters.has_url == "yes" %}selected{% endif %}>has URL</option>
+      <option value="no" {% if filters.has_url == "no" %}selected{% endif %}>missing URL</option>
+    </select>
+  </div>
+  <div>
+    <label>Min confidence</label>
+    <input type="text" name="min_confidence" value="{{ filters.min_confidence }}" placeholder="0.75">
+  </div>
+  <div>
+    <label>Sort</label>
+    <select name="sort">
+      {% for sort in sort_choices %}<option value="{{ sort }}" {% if filters.sort == sort %}selected{% endif %}>{{ sort }}</option>{% endfor %}
+    </select>
+  </div>
+  <div class="action-row">
+    <button class="btn btn-blue" type="submit">Apply</button>
+    <a class="btn btn-grey" href="?">Reset</a>
+  </div>
+</form>
+
+<section class="panel">
+  <div class="panel-head">
+    <h2>Staged majors</h2>
+    <span class="badge b-unknown">{{ programs|length }} rows</span>
+  </div>
+  <div class="table-wrap">
+    <table class="data-table">
+      <tr>
+        <th>University</th><th>Major</th><th>Level</th><th>Major URL</th><th>Source URL</th>
+        <th>Field</th><th>Faculty/school</th><th>Higher-ed</th><th>Confidence</th>
+        <th>Validation</th><th>Review</th><th>Evidence</th><th>Actions</th>
+      </tr>
+      {% for p in programs %}
+      <tr>
+        <td><a href="{% url 'academic_etl:university_detail' p.extracted_university_id %}">{{ p.extracted_university.name|truncatechars:40 }}</a></td>
+        <td><a href="{% url 'academic_etl:program_detail' p.pk %}">{{ p.program_name|truncatechars:68 }}</a></td>
+        <td><span class="badge b-skip">{{ p.degree_level }}</span></td>
+        <td>{% if p.program_url %}<a href="{{ p.program_url }}" target="_blank" rel="noopener">major url</a>{% else %}<span class="mut">missing</span>{% endif %}</td>
+        <td>{% if p.source_url %}<a href="{{ p.source_url }}" target="_blank" rel="noopener">source</a>{% else %}<span class="mut">missing</span>{% endif %}</td>
+        <td>{{ p.field_of_study|default:"-"|truncatechars:32 }}</td>
+        <td>{{ p.faculty_or_school|default:"-"|truncatechars:36 }}</td>
+        <td>
+          {% if p.is_higher_education_program %}
+            <span class="badge b-yes">yes</span>
+          {% elif p.is_higher_education_program == False %}
+            <span class="badge b-no">no</span>
+          {% else %}
+            <span class="badge b-uncertain">uncertain</span>
+          {% endif %}
+        </td>
+        <td><div class="score"><span>{{ p.confidence_score|floatformat:2 }}</span><div class="progress {% if p.confidence_score >= 0.75 %}ok{% elif p.confidence_score >= 0.5 %}warn{% else %}bad{% endif %}"><span style="width:{% widthratio p.confidence_score 1 100 %}%"></span></div></div></td>
+        <td><span class="badge b-{{ p.validation_status }}">{{ p.validation_status }}</span>{% if p.issue_count %}<br><span class="badge b-warning" style="margin-top:5px">{{ p.issue_count }} issues</span>{% endif %}</td>
+        <td><span class="badge b-{{ p.review_status }}">{{ p.review_status }}</span></td>
+        <td><span class="badge b-info">{{ p.evidence_count }} evidence</span></td>
+        <td>
+          <form method="post" action="{% url 'academic_etl:program_action' p.pk %}" class="action-row">
+            {% csrf_token %}
+            <input type="hidden" name="next" value="{{ request.get_full_path }}">
+            <a class="btn btn-grey" href="{% url 'academic_etl:program_detail' p.pk %}">Review</a>
+            <button class="btn btn-ok btn-icon" name="action" value="approve" title="Approve">A</button>
+            <button class="btn btn-bad btn-icon" name="action" value="delete" title="Reject">R</button>
+          </form>
+        </td>
+      </tr>
+      {% empty %}
+        <tr><td colspan="13" class="mut">No majors match the filters.</td></tr>
+      {% endfor %}
+    </table>
+  </div>
+</section>
+{% endblock %}

@@ -1,0 +1,100 @@
+{% extends "academic_etl/base.html" %}
+{% block title %}Country Configurations{% endblock %}
+{% block content %}
+<section class="page-head">
+  <div>
+    <p class="eyebrow">Global Pipeline</p>
+    <h1 class="page-title">Country Configurations</h1>
+    <p class="lede">Currency, denominations, degree mappings, language markers, and crawl settings per country.</p>
+  </div>
+  <div class="toolbar">
+    <a class="btn btn-ghost" href="{% url 'academic_etl:dashboard' %}">Dashboard</a>
+  </div>
+</section>
+
+<section class="metric-grid">
+  <div class="metric">
+    <div class="label">Total countries</div>
+    <div class="value">{{ configs|length }}</div>
+    <div class="hint">Configured for pipeline</div>
+  </div>
+  <div class="metric">
+    <div class="label">Active</div>
+    <div class="value">{{ active_count }}</div>
+    <div class="hint">Ready to crawl</div>
+  </div>
+  <div class="metric">
+    <div class="label">Currencies</div>
+    <div class="value">{{ currency_count }}</div>
+    <div class="hint">Unique ISO 4217 codes</div>
+  </div>
+</section>
+
+<section class="panel">
+  <div class="panel-head">
+    <h2>Country Registry</h2>
+    <span class="badge b-discovered">{{ configs|length }} countries</span>
+  </div>
+  <div class="table-wrap">
+    <table class="data-table">
+      <tr>
+        <th>Country</th><th>Code</th><th>Currency</th><th>Denominations</th>
+        <th>Languages</th><th>Degree terms</th><th>Providers</th>
+        <th>Max institutions</th><th>Active</th><th>Last crawl</th>
+      </tr>
+      {% for c in configs %}
+      <tr>
+        <td><strong>{{ c.country_name }}</strong></td>
+        <td class="mono">{{ c.country_code }}</td>
+        <td><span class="badge b-info">{{ c.currency_code }}</span></td>
+        <td class="mono mut">
+          {% for k, v in c.denomination_config.items %}
+            {{ k }}={{ v }}{% if not forloop.last %}, {% endif %}
+          {% endfor %}
+        </td>
+        <td class="mono mut">
+          {% for lang in c.primary_languages %}
+            {{ lang }}{% if not forloop.last %}, {% endif %}
+          {% endfor %}
+        </td>
+        <td class="num">{{ c.degree_level_map.items|length }}</td>
+        <td class="mono mut">
+          {% for p in c.preferred_providers %}
+            {{ p }}{% if not forloop.last %}, {% endif %}
+          {% endfor %}
+        </td>
+        <td class="num">{{ c.max_institutions }}</td>
+        <td>
+          <span class="badge {% if c.is_active %}b-valid{% else %}b-error{% endif %}">
+            {% if c.is_active %}yes{% else %}no{% endif %}
+          </span>
+        </td>
+        <td class="mut nowrap">{% if c.last_crawl_at %}{{ c.last_crawl_at|date:"Y-m-d" }}{% else %}never{% endif %}</td>
+      </tr>
+      {% endfor %}
+    </table>
+  </div>
+</section>
+
+<section class="panel-flat">
+  <div class="panel-head">
+    <h2>Setup / refresh</h2>
+    <span class="badge b-unknown">CLI</span>
+  </div>
+  <div class="panel-body">
+    <div class="snippet">
+      <pre style="margin:0;white-space:pre-wrap"># Bootstrap or refresh country configs from built-in defaults:
+python manage.py setup_country_configs
+
+# Only specific countries:
+python manage.py setup_country_configs --only VN,IN,US,JP
+
+# Edit individual configs via Django Admin:
+/admin/academic_etl/countryconfig/</pre>
+    </div>
+    <div class="action-row" style="margin-top:12px">
+      <a class="btn btn-blue" href="/admin/academic_etl/countryconfig/">Edit in Django Admin</a>
+    </div>
+  </div>
+</section>
+{% endblock %}

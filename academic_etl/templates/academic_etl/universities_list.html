@@ -1,0 +1,172 @@
+{% extends "academic_etl/base.html" %}
+{% block title %}Universities - Run #{{ run.pk }}{% endblock %}
+{% block content %}
+<section class="page-head">
+  <div>
+    <p class="eyebrow">University Data Table</p>
+    <h1 class="page-title">University review - Run #{{ run.pk }}</h1>
+    <p class="lede">Full CSV-shaped staging table with server-side filters, field scores, evidence count and human review actions.</p>
+  </div>
+  <div class="toolbar">
+    <a class="btn btn-grey" href="{% url 'academic_etl:run_detail' run.pk %}">Run detail</a>
+    <a class="btn btn-cyan" href="{% url 'academic_etl:clean_universities' run.pk %}">Clean data</a>
+    <form method="post" action="{% url 'academic_etl:run_normalize_data_action' run.pk %}" style="display:inline">
+      {% csrf_token %}
+      <button class="btn btn-grey" type="submit">Normalize contacts</button>
+    </form>
+    <a class="btn btn-blue" href="{% url 'academic_etl:add_university' run.pk %}">Add university</a>
+  </div>
+</section>
+
+<form method="get" class="filter-form">
+  <div class="wide">
+    <label>Search</label>
+    <input type="text" name="q" value="{{ filters.q }}" placeholder="name, slug, website, country">
+  </div>
+  <div>
+    <label>Validation</label>
+    <select name="validation">
+      <option value="">all</option>
+      {% for value, label in validation_choices %}<option value="{{ value }}" {% if filters.validation == value %}selected{% endif %}>{{ value }}</option>{% endfor %}
+    </select>
+  </div>
+  <div>
+    <label>Review</label>
+    <select name="review">
+      <option value="">all</option>
+      {% for value, label in review_choices %}<option value="{{ value }}" {% if filters.review == value %}selected{% endif %}>{{ value }}</option>{% endfor %}
+    </select>
+  </div>
+  <div>
+    <label>Type</label>
+    <select name="institution_type">
+      <option value="">all</option>
+      {% for value, label in institution_type_choices %}<option value="{{ value }}" {% if filters.institution_type == value %}selected{% endif %}>{{ value }}</option>{% endfor %}
+    </select>
+  </div>
+  <div>
+    <label>Website</label>
+    <select name="has_website">
+      <option value="">all</option>
+      <option value="yes" {% if filters.has_website == "yes" %}selected{% endif %}>has website</option>
+      <option value="no" {% if filters.has_website == "no" %}selected{% endif %}>missing website</option>
+    </select>
+  </div>
+  <div>
+    <label>Missing field</label>
+    <select name="missing_field">
+      <option value="">none</option>
+      {% for field in university_fields %}<option value="{{ field }}" {% if filters.missing_field == field %}selected{% endif %}>{{ field }}</option>{% endfor %}
+    </select>
+  </div>
+  <div>
+    <label>Min confidence</label>
+    <input type="text" name="min_confidence" value="{{ filters.min_confidence }}" placeholder="0.75">
+  </div>
+  <div>
+    <label>Sort</label>
+    <select name="sort">
+      {% for sort in sort_choices %}<option value="{{ sort }}" {% if filters.sort == sort %}selected{% endif %}>{{ sort }}</option>{% endfor %}
+    </select>
+  </div>
+  <div class="action-row">
+    <button class="btn btn-blue" type="submit">Apply</button>
+    <a class="btn btn-grey" href="?">Reset</a>
+  </div>
+</form>
+
+{% if quality_stage_status == "pending" %}
+<div class="snippet" style="margin-bottom:16px">
+  Financials, campus count, contact details, rank and campus life are waiting for the automatic Fanar/Gemini quality step (Stage 4/6). The pipeline crawls first so it only calls AI for fields that remain missing or invalid.
+</div>
+{% elif quality_stage_status == "running" %}
+<div class="snippet" style="margin-bottom:16px">
+  Fanar is checking missing fields now. Gemini verifies only the fields Fanar cannot return in the required format. Refresh this page to see verified values as they are written.
+</div>
+{% endif %}
+
+<section class="panel">
+  <div class="panel-head">
+    <h2>Staged universities</h2>
+    <span class="badge b-unknown">{{ universities|length }} rows</span>
+  </div>
+  <div class="table-wrap">
+    <table class="data-table">
+      <tr>
+        <th>Name</th><th>Scores</th><th>Status</th><th>Evidence</th><th>Location</th>
+        <th>Description</th><th>Slug</th><th>Sponsored</th><th>Website</th><th>Global rank</th>
+        <th>Financials</th><th>Loan</th><th>Campus life</th><th class="num">Students</th>
+        <th>Student/faculty</th><th>International</th><th>Housing</th><th>Email</th><th>Phone</th>
+        <th>Contact person</th><th>Admissions URL</th><th>Immigration</th><th class="num">Campuses</th><th></th>
+      </tr>
+      {% for uni in universities %}
+      <tr>
+        <td><a href="{% url 'academic_etl:university_detail' uni.pk %}">{{ uni.name|default:"(no name)" }}</a></td>
+        <td>
+          <div class="score" title="confidence"><span>{{ uni.confidence_score|floatformat:2 }}</span><div class="progress {% if uni.confidence_score >= 0.75 %}ok{% elif uni.confidence_score >= 0.5 %}warn{% else %}bad{% endif %}"><span style="width:{% widthratio uni.confidence_score 1 100 %}%"></span></div></div>
+          <div class="score" title="completeness" style="margin-top:6px"><span>{{ uni.completeness_score|floatformat:2 }}</span><div class="progress {% if uni.completeness_score >= 0.75 %}ok{% elif uni.completeness_score >= 0.45 %}warn{% else %}bad{% endif %}"><span style="width:{% widthratio uni.completeness_score 1 100 %}%"></span></div></div>
+        </td>
+        <td>
+          <span class="badge b-{{ uni.validation_status }}">{{ uni.validation_status }}</span><br>
+          <span class="badge b-{{ uni.review_status }}" style="margin-top:5px">{{ uni.review_status }}</span>
+          {% if uni.issue_count %}<br><span class="badge b-warning" style="margin-top:5px">{{ uni.issue_count }} issues</span>{% endif %}
+        </td>
+        <td><span class="badge b-info">{{ uni.evidence_count }} evidence</span></td>
+        <td>{{ uni.location|truncatechars:38 }}</td>
+        <td>{{ uni.description|truncatechars:70 }}</td>
+        <td class="mono">{{ uni.slug|truncatechars:36 }}</td>
+        <td>{% if uni.sponsored %}<span class="badge b-yes">yes</span>{% else %}<span class="badge b-no">no</span>{% endif %}</td>
+        <td>{% if uni.website %}<a href="{{ uni.website }}" target="_blank" rel="noopener">{{ uni.website|truncatechars:40 }}</a>{% else %}<span class="mut">missing</span>{% endif %}</td>
+        <td>
+          {{ uni.global_rank|default:"-" }}<br>
+          {% if uni.global_rank_quality.label and uni.global_rank_quality.label != "Unknown" and uni.global_rank_quality.label != "API error" %}
+          <span class="badge b-{{ uni.global_rank_quality.tone }}" title="{{ uni.global_rank_quality.title }}">{{ uni.global_rank_quality.label }}</span>
+          {% endif %}
+        </td>
+        <td>
+          {{ uni.financials|default:"-"|truncatechars:60 }}<br>
+          {% if uni.financials_quality.label and uni.financials_quality.label != "Unknown" and uni.financials_quality.label != "API error" %}
+          <span class="badge b-{{ uni.financials_quality.tone }}" title="{{ uni.financials_quality.title }}">{{ uni.financials_quality.label }}</span>
+          {% endif %}
+        </td>
+        <td>{% if uni.student_loan_available %}<span class="badge b-yes">yes</span>{% else %}<span class="badge b-no">no</span>{% endif %}</td>
+        <td>
+          {{ uni.campus_student_life|default:"-"|truncatechars:60 }}<br>
+          {% if uni.campus_student_life_quality.label and uni.campus_student_life_quality.label != "Unknown" and uni.campus_student_life_quality.label != "API error" %}
+          <span class="badge b-{{ uni.campus_student_life_quality.tone }}" title="{{ uni.campus_student_life_quality.title }}">{{ uni.campus_student_life_quality.label }}</span>
+          {% endif %}
+        </td>
+        <td class="num">{{ uni.number_of_students|default:"-" }}</td>
+        <td>{{ uni.student_to_faculty_ratio|default:"-" }}</td>
+        <td>{{ uni.international_student_ratio|default:"-" }}</td>
+        <td>{% if uni.housing_availability %}<span class="badge b-yes">yes</span>{% else %}<span class="badge b-no">no</span>{% endif %}</td>
+        <td>
+          {{ uni.admissions_contact|default:"-" }}<br>
+          {% if uni.admissions_contact_quality.label and uni.admissions_contact_quality.label != "Unknown" and uni.admissions_contact_quality.label != "API error" %}
+          <span class="badge b-{{ uni.admissions_contact_quality.tone }}" title="{{ uni.admissions_contact_quality.title }}">{{ uni.admissions_contact_quality.label }}</span>
+          {% endif %}
+        </td>
+        <td class="mono" style="white-space:nowrap">
+          {{ uni.admissions_phone|default:"-" }}<br>
+          {% if uni.admissions_phone_quality.label and uni.admissions_phone_quality.label != "Unknown" and uni.admissions_phone_quality.label != "API error" %}
+          <span class="badge b-{{ uni.admissions_phone_quality.tone }}" title="{{ uni.admissions_phone_quality.title }}">{{ uni.admissions_phone_quality.label }}</span>
+          {% endif %}
+        </td>
+        <td>{{ uni.contact_person|default:"-" }}</td>
+        <td>{% if uni.admissions_page_link %}<a href="{{ uni.admissions_page_link }}" target="_blank" rel="noopener">admissions</a>{% else %}<span class="mut">missing</span>{% endif %}</td>
+        <td>{% if uni.immigration_support %}<span class="badge b-yes">yes</span>{% else %}<span class="badge b-no">no</span>{% endif %}</td>
+        <td class="num">
+          {{ uni.display_university_campuses|default:"-" }}<br>
+          {% if uni.university_campuses_quality.label and uni.university_campuses_quality.label != "Unknown" and uni.university_campuses_quality.label != "API error" %}
+          <span class="badge b-{{ uni.university_campuses_quality.tone }}" title="{{ uni.university_campuses_quality.title }}">{{ uni.university_campuses_quality.label }}</span>
+          {% endif %}
+        </td>
+        <td class="nowrap"><a class="btn btn-grey" href="{% url 'academic_etl:university_detail' uni.pk %}">Review</a></td>
+      </tr>
+      {% empty %}
+        <tr><td colspan="24" class="mut">No staged universities match the filters.</td></tr>
+      {% endfor %}
+    </table>
+  </div>
+</section>
+{% endblock %}

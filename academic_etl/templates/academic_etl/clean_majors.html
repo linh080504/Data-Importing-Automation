@@ -1,0 +1,53 @@
+{% extends "academic_etl/base.html" %}
+{% block title %}Clean Majors - Run #{{ run.pk }}{% endblock %}
+{% block content %}
+<section class="page-head">
+  <div>
+    <p class="eyebrow">Clean Data</p>
+    <h1 class="page-title">Clean Majors - Run #{{ run.pk }}</h1>
+    <p class="lede">Approved or edited major staging records ready for import planning, with evidence and confidence visible.</p>
+  </div>
+  <div class="toolbar">
+    <a class="btn btn-grey" href="{% url 'academic_etl:majors_list' run.pk %}">Major review</a>
+    <a class="btn btn-blue" href="{% url 'academic_etl:import_preview' run.pk %}">Import preview</a>
+    <a class="btn btn-ok" href="{% url 'academic_etl:export_majors_csv' run.pk %}">⬇ Download majors CSV</a>
+  </div>
+</section>
+
+<form method="get" class="filter-form">
+  <div class="wide"><label>Search</label><input type="text" name="q" value="{{ filters.q }}" placeholder="major, university, URL"></div>
+  <div><label>Degree</label><select name="degree_level"><option value="">all</option>{% for value, label in degree_level_choices %}<option value="{{ value }}" {% if filters.degree_level == value %}selected{% endif %}>{{ value }}</option>{% endfor %}</select></div>
+  <div><label>Higher-ed</label><select name="higher_ed"><option value="">all</option><option value="yes" {% if filters.higher_ed == "yes" %}selected{% endif %}>yes</option><option value="uncertain" {% if filters.higher_ed == "uncertain" %}selected{% endif %}>uncertain</option></select></div>
+  <div><label>Major URL</label><select name="has_url"><option value="">all</option><option value="yes" {% if filters.has_url == "yes" %}selected{% endif %}>has URL</option><option value="no" {% if filters.has_url == "no" %}selected{% endif %}>missing URL</option></select></div>
+  <div><label>Min confidence</label><input type="text" name="min_confidence" value="{{ filters.min_confidence }}" placeholder="0.75"></div>
+  <div><label>Sort</label><select name="sort">{% for sort in sort_choices %}<option value="{{ sort }}" {% if filters.sort == sort %}selected{% endif %}>{{ sort }}</option>{% endfor %}</select></div>
+  <div class="action-row"><button class="btn btn-blue" type="submit">Apply</button><a class="btn btn-grey" href="?">Reset</a></div>
+</form>
+
+<section class="panel">
+  <div class="panel-head">
+    <h2>Clean major staging table</h2>
+    <span class="badge b-valid">{{ programs|length }} clean rows</span>
+  </div>
+  <div class="table-wrap">
+    <table class="data-table">
+      <tr><th>University</th><th>Major</th><th>Reason</th><th>Level</th><th>Major URL</th><th>Source</th><th>Confidence</th><th>Evidence</th><th></th></tr>
+      {% for p in programs %}
+      <tr>
+        <td><a href="{% url 'academic_etl:university_detail' p.extracted_university_id %}">{{ p.extracted_university.name|truncatechars:42 }}</a></td>
+        <td><a href="{% url 'academic_etl:program_detail' p.pk %}">{{ p.program_name|truncatechars:70 }}</a></td>
+        <td><span class="badge b-{{ p.review_status }}">{{ p.review_status }}</span> <span class="badge b-{{ p.validation_status }}">{{ p.validation_status }}</span></td>
+        <td><span class="badge b-skip">{{ p.degree_level }}</span></td>
+        <td>{% if p.program_url %}<a href="{{ p.program_url }}" target="_blank" rel="noopener">major url</a>{% else %}<span class="mut">missing</span>{% endif %}</td>
+        <td>{% if p.source_url %}<a href="{{ p.source_url }}" target="_blank" rel="noopener">source</a>{% else %}<span class="mut">missing</span>{% endif %}</td>
+        <td><div class="score"><span>{{ p.confidence_score|floatformat:2 }}</span><div class="progress {% if p.confidence_score >= 0.75 %}ok{% elif p.confidence_score >= 0.5 %}warn{% else %}bad{% endif %}"><span style="width:{% widthratio p.confidence_score 1 100 %}%"></span></div></div></td>
+        <td><span class="badge b-info">{{ p.evidence_count }} evidence</span>{% if p.issue_count %}<br><span class="badge b-warning" style="margin-top:5px">{{ p.issue_count }} issues</span>{% endif %}</td>
+        <td><a class="btn btn-grey" href="{% url 'academic_etl:program_detail' p.pk %}">Open</a></td>
+      </tr>
+      {% empty %}
+        <tr><td colspan="9" class="mut">No clean majors match the filters.</td></tr>
+      {% endfor %}
+    </table>
+  </div>
+</section>
+{% endblock %}

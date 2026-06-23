@@ -1,0 +1,123 @@
+{% extends "academic_etl/base.html" %}
+{% block title %}Crawl Schedules{% endblock %}
+{% block content %}
+<section class="page-head">
+  <div>
+    <p class="eyebrow">Automation</p>
+    <h1 class="page-title">Crawl Schedules</h1>
+    <p class="lede">Manage recurring crawl schedules per country. Cron job checks which countries are due every 6 hours.</p>
+  </div>
+  <div class="toolbar">
+    <a class="btn btn-ghost" href="{% url 'academic_etl:dashboard' %}">Dashboard</a>
+  </div>
+</section>
+
+<section class="panel">
+  <div class="panel-head">
+    <h2>Add / Update Schedule</h2>
+    <span class="badge b-info">new schedule</span>
+  </div>
+  <form method="post" action="{% url 'academic_etl:schedule_create' %}" class="filter-form" style="margin:0; border:0; border-radius:0">
+    {% csrf_token %}
+    <div>
+      <label>Country</label>
+      <select name="country">
+        {% for name, code in country_options %}
+          <option value="{{ name }}">{{ name }} ({{ code }})</option>
+        {% endfor %}
+      </select>
+    </div>
+    <div>
+      <label>Frequency</label>
+      <select name="frequency">
+        <option value="weekly">Weekly</option>
+        <option value="biweekly">Bi-weekly</option>
+        <option value="monthly" selected>Monthly</option>
+        <option value="quarterly">Quarterly</option>
+      </select>
+    </div>
+    <div>
+      <label>Strategy</label>
+      <select name="strategy">
+        <option value="hybrid" selected>Hybrid (crawl + LLM)</option>
+        <option value="crawl">Crawl only</option>
+        <option value="gemini">Gemini only</option>
+        <option value="fanar">Fanar only</option>
+      </select>
+    </div>
+    <div>
+      <label>Discover limit</label>
+      <input type="text" name="discover_limit" value="200">
+    </div>
+    <div class="action-row">
+      <button class="btn btn-blue" type="submit">Create / Update</button>
+    </div>
+  </form>
+</section>
+
+<section class="panel">
+  <div class="panel-head">
+    <h2>Active Schedules</h2>
+    <span class="badge b-discovered">{{ schedules|length }} countries</span>
+  </div>
+  <div class="table-wrap">
+    <table class="data-table">
+      <tr>
+        <th>Country</th><th>Code</th><th>Frequency</th><th>Strategy</th>
+        <th>Active</th><th>Last run</th><th>Next run</th>
+        <th class="num">Errors</th><th>Actions</th>
+      </tr>
+      {% for s in schedules %}
+      <tr>
+        <td><strong>{{ s.country_name }}</strong></td>
+        <td class="mono">{{ s.country_code }}</td>
+        <td><span class="badge b-info">{{ s.frequency }}</span></td>
+        <td class="mono">{{ s.strategy }}</td>
+        <td>
+          <span class="badge {% if s.is_active %}b-valid{% else %}b-error{% endif %}">
+            {% if s.is_active %}active{% else %}paused{% endif %}
+          </span>
+        </td>
+        <td class="mut nowrap">{% if s.last_run_at %}{{ s.last_run_at|date:"Y-m-d H:i" }}{% else %}never{% endif %}</td>
+        <td class="mut nowrap">{% if s.next_run_at %}{{ s.next_run_at|date:"Y-m-d H:i" }}{% else %}pending{% endif %}</td>
+        <td class="num">
+          {% if s.error_count %}<span class="badge b-error">{{ s.error_count }}</span>{% else %}0{% endif %}
+        </td>
+        <td>
+          <form method="post" action="{% url 'academic_etl:schedule_toggle' s.pk %}" style="display:inline">
+            {% csrf_token %}
+            {% if s.is_active %}
+              <button class="btn btn-grey" type="submit" name="action" value="disable">Pause</button>
+            {% else %}
+              <button class="btn btn-ok" type="submit" name="action" value="enable">Enable</button>
+            {% endif %}
+          </form>
+          <form method="post" action="{% url 'academic_etl:schedule_delete' s.pk %}" style="display:inline" onsubmit="return confirm('Delete schedule for {{ s.country_name }}?')">
+            {% csrf_token %}
+            <button class="btn btn-bad" type="submit">Delete</button>
+          </form>
+        </td>
+      </tr>
+      {% empty %}
+      <tr><td colspan="9" class="mut">No schedules configured yet. Create one above.</td></tr>
+      {% endfor %}
+    </table>
+  </div>
+</section>
+
+<section class="panel-flat">
+  <div class="panel-head">
+    <h2>Cron setup</h2>
+    <span class="badge b-unknown">system</span>
+  </div>
+  <div class="panel-body">
+    <div class="snippet">
+      <pre style="margin:0;white-space:pre-wrap"># Add to system crontab (runs every 6 hours, checks which countries are due):
+0 */6 * * * cd /path/to/beyond_degree && python manage.py run_scheduled_crawls >> var/scheduler.log 2>&1
+
+# Refresh exchange rates daily:
+0 3 * * * cd /path/to/beyond_degree && python manage.py refresh_exchange_rates >> var/scheduler.log 2>&1</pre>
+    </div>
+  </div>
+</section>
+{% endblock %}

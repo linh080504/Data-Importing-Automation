@@ -1,0 +1,109 @@
+{% extends "academic_etl/base.html" %}
+{% block title %}Import preview - Run #{{ run.pk }}{% endblock %}
+{% block content %}
+<section class="page-head">
+  <div>
+    <p class="eyebrow">Import Readiness</p>
+    <h1 class="page-title">Import preview - Run #{{ run.pk }}</h1>
+    <p class="lede">
+      {{ run.country_name }} {{ run.country_code }} |
+      mode: {% if approved_only %}approved-only{% else %}approved or confidence >= {{ threshold }}{% endif %}
+    </p>
+  </div>
+  <div class="toolbar">
+    <a class="btn btn-grey" href="{% url 'academic_etl:run_detail' run.pk %}">Run detail</a>
+    {% if approved_only %}
+      <a class="btn btn-blue" href="?all=1">Threshold mode</a>
+    {% else %}
+      <a class="btn btn-blue" href="?">Approved-only</a>
+    {% endif %}
+  </div>
+</section>
+
+<section class="panel-flat">
+  <div class="panel-head">
+    <h2>Execution command</h2>
+    <span class="badge b-dry_run">recommended first</span>
+  </div>
+  <div class="panel-body">
+    <div class="code-block mono">python manage.py import_country_run --run-id {{ run.pk }} --approved-only --dry-run</div>
+    <p class="mut" style="margin-bottom:0">Drop <span class="mono">--dry-run</span> only after reviewing the create/update/skip plan.</p>
+  </div>
+</section>
+
+<section class="panel">
+  <div class="panel-head">
+    <h2>University import plan</h2>
+    <span class="badge b-unknown">{{ rows|length }} staged universities</span>
+  </div>
+  <div class="table-wrap">
+    <table class="data-table">
+      <tr>
+        <th>University</th><th>Eligible</th><th>Action</th><th>Matched by</th>
+        <th>Reason</th><th class="num">Approved majors</th><th>Field changes</th>
+      </tr>
+      {% for row in rows %}
+      <tr>
+        <td><a href="{% url 'academic_etl:university_detail' row.uni.pk %}">{{ row.uni.name|default:"(no name)" }}</a></td>
+        <td>
+          {% if row.eligible %}
+            <span class="badge b-valid">yes</span>
+          {% else %}
+            <span class="badge b-skip">no</span>
+          {% endif %}
+        </td>
+        <td><span class="badge b-{{ row.action }}">{{ row.action }}</span></td>
+        <td class="mono">{{ row.matched_by|default:"-" }}</td>
+        <td class="mut">{{ row.reason }}</td>
+        <td class="num">{{ row.n_programs }}</td>
+        <td>
+          {% if row.diff %}
+          <details>
+            <summary>{{ row.diff|length }} field changes</summary>
+            <table class="data-table">
+              {% for field, change in row.diff.items %}
+              <tr>
+                <td class="mono">{{ field }}</td>
+                <td class="mut">{{ change.old|default_if_none:"empty"|truncatechars:50 }}</td>
+                <td>{{ change.new|truncatechars:60 }}</td>
+              </tr>
+              {% endfor %}
+            </table>
+          </details>
+          {% else %}
+            <span class="mut">no changes</span>
+          {% endif %}
+        </td>
+      </tr>
+      {% empty %}
+        <tr><td colspan="7" class="mut">No staged universities.</td></tr>
+      {% endfor %}
+    </table>
+  </div>
+</section>
+
+<section class="panel">
+  <div class="panel-head">
+    <h2>Past import jobs</h2>
+    <span class="badge b-unknown">audit trail</span>
+  </div>
+  <div class="table-wrap">
+    <table class="data-table">
+      <tr><th>#</th><th>Mode</th><th>Status</th><th class="num">Processed</th><th class="num">Created</th><th class="num">Updated</th><th class="num">Skipped</th></tr>
+      {% for job in import_jobs %}
+      <tr>
+        <td class="mono"><a href="{% url 'academic_etl:import_job_detail' job.pk %}">#{{ job.pk }}</a></td>
+        <td>{% if job.dry_run %}<span class="badge b-dry_run">dry-run</span>{% else %}<span class="badge b-valid">live</span>{% endif %}</td>
+        <td><span class="badge b-{{ job.status }}">{{ job.status }}</span></td>
+        <td class="num">{{ job.total_processed }}</td>
+        <td class="num">{{ job.total_created }}</td>
+        <td class="num">{{ job.total_updated }}</td>
+        <td class="num">{{ job.total_skipped }}</td>
+      </tr>
+      {% empty %}
+        <tr><td colspan="7" class="mut">No import jobs yet.</td></tr>
+      {% endfor %}
+    </table>
+  </div>
+</section>
+{% endblock %}

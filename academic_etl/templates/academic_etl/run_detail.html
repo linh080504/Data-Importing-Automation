@@ -1,0 +1,385 @@
+{% extends "academic_etl/base.html" %}
+{% block title %}Run #{{ run.pk }}{% endblock %}
+{% block extra_head %}{% if auto_refresh %}<noscript><meta http-equiv="refresh" content="10"></noscript>{% endif %}{% endblock %}
+{% block content %}
+<section class="page-head">
+  <div>
+    <p class="eyebrow">Pipeline Run</p>
+    <h1 class="page-title">Run #{{ run.pk }} - {{ run.country_name }} <span class="badge b-{{ run.status }}">{{ run.status }}</span></h1>
+    <p class="lede">mode={{ progress.execution_mode|title }} | provider={{ run.seed_provider }} | scope={{ run.crawl_scope }} | created {{ run.created_at|date:"Y-m-d H:i" }}</p>
+  </div>
+  <div class="toolbar">
+    <a class="btn btn-grey" href="{% url 'academic_etl:runs_list' %}">Back to runs</a>
+    <a class="btn btn-blue" href="{% url 'academic_etl:import_preview' run.pk %}">Import preview</a>
+    <a class="btn btn-ok" href="{% url 'academic_etl:export_universities_csv' run.pk %}">⬇ Universities CSV (English)</a>
+    <a class="btn btn-ok" href="{% url 'academic_etl:export_majors_csv' run.pk %}">⬇ Majors CSV (English)</a>
+    <a class="btn btn-ok" href="{% url 'academic_etl:export_simple_majors_csv' run.pk %}" title="University Name | Major Name | Source URL">⬇ Majors CSV (simple 3-col)</a>
+    <a class="btn btn-grey" href="{% url 'academic_etl:export_universities_csv' run.pk %}?all=1" title="All staged rows incl. non-English/unapproved">⬇ Uni CSV (all)</a>
+    <a class="btn btn-grey" href="{% url 'academic_etl:export_majors_csv' run.pk %}?all=1" title="All staged rows incl. non-English/unapproved">⬇ Majors CSV (all)</a>
+    <form method="post" action="{% url 'academic_etl:run_delete_action' run.pk %}" style="display:inline" onsubmit="return confirm('Xóa run #{{ run.pk }} và toàn bộ dữ liệu của nó? Không thể hoàn tác.');">
+      {% csrf_token %}
+      <button class="btn btn-bad" type="submit">🗑 Delete run</button>
+    </form>
+  </div>
+</section>
+
+{% if run.error_message %}
+  <div class="snippet">{{ run.error_message }}</div>
+{% endif %}
+
+<section id="run-progress" class="status-banner {{ progress.tone }}">
+  <div>
+    <p class="eyebrow">Current pipeline state</p>
+    <div id="progress-label" class="state-title">{{ progress.phase_label }}</div>
+    <div id="progress-detail" class="state-detail">{{ progress.phase_detail }}</div>
+    <div id="progress-coverage" class="mut mono" style="margin-top:6px">{{ progress.coverage_detail }}</div>
+    <div class="state-progress">
+      <div class="progress progress-lg {% if progress.tone == 'ok' %}ok{% elif progress.tone == 'bad' %}bad{% elif progress.tone == 'warn' %}warn{% endif %}">
+        <span id="progress-bar" style="width:{{ progress.progress_pct }}%"></span>
+      </div>
+      <div id="progress-percent" class="mono">{{ progress.progress_pct }}%</div>
+    </div>
+    <div class="mut mono" style="margin-top:4px">
+      Stage <span id="progress-stage">{{ progress.stage_number }}/{{ progress.stage_count }}</span> |
+      <span id="progress-count">{{ progress.stage_processed }}/{{ progress.stage_total }}</span> |
+      latest <span id="progress-item">{{ progress.current_item|default:"waiting" }}</span>
+      <span id="progress-url">{% if progress.current_url %}| {{ progress.current_url }}{% endif %}</span>
+    </div>
+    <div class="mut mono" style="margin-top:6px">
+      Fanar calls <span id="progress-fanar-calls">{{ progress.stage_metrics.fanar_calls|default:0 }}</span> |
+      Gemini fallbacks <span id="progress-gemini-calls">{{ progress.stage_metrics.gemini_calls|default:0 }}</span> |
+      verified fields <span id="progress-verified-fields">{{ progress.stage_metrics.verified_fields|default:0 }}</span> |
+      errors <span id="progress-field-errors">{{ progress.stage_metrics.errors|default:0 }}</span>
+    </div>
+    <div class="mut mono" style="margin-top:6px">
+      {% if progress.is_gemini %}
+        {{ progress.universities }} trường có data | {{ progress.majors }} ngành{% if run.stats_json.current_step %} | {{ run.stats_json.current_step }}{% endif %}
+      {% else %}
+        {{ progress.execution_mode|title }} | {{ progress.staged_seeds }}/{{ progress.eligible_seeds }} staged | <span id="progress-current-step">{{ run.stats_json.current_step|default:"waiting" }}</span>
+      {% endif %}
+    </div>
+    {% if progress.last_heartbeat %}
+    <div class="mut mono" style="margin-top:4px">
+      Last heartbeat <span id="progress-heartbeat">{{ progress.last_heartbeat|date:"Y-m-d H:i:s" }}</span>
+      | stage=<span id="progress-stage-name">{{ progress.active_stage|default:"waiting" }}</span>
+      <span id="progress-stale">{% if progress.is_stale %}| stale{% endif %}</span>
+    </div>
+    {% endif %}
+    {% if progress.next_retry_at %}
+    <div class="mut mono" style="margin-top:4px">
+      Retry {{ progress.retry_count }}/3 at {{ progress.next_retry_at|date:"Y-m-d H:i:s" }}
+    </div>
+    {% endif %}
+    {% if progress.is_gemini and progress.gem_total %}
+    <div class="mut mono" style="margin-top:4px">
+      Gemini: {{ progress.gem_attempted }}/{{ progress.gem_total }} trường |
+      {{ progress.gem.staged }} có data | {{ progress.gem.from_cache }} từ cache |
+      {{ progress.gem.errors }} lỗi/hết quota
+      {% if progress.gem_running %}<span class="badge b-warning">đang chạy…</span>{% elif progress.gem.done %}<span class="badge b-valid">xong</span>{% endif %}
+    </div>
+    {% endif %}
+    {% if progress.gem_majors.total %}
+    <div class="mut mono" style="margin-top:4px">
+      Majors: {{ progress.gem_majors.attempted }}/{{ progress.gem_majors.total }} trường |
+      {{ progress.gem_majors.programs }} ngành | {{ progress.gem_majors.errors }} lỗi
+      {% if progress.majors_running %}<span class="badge b-warning">đang chạy…</span>{% elif progress.gem_majors.done %}<span class="badge b-valid">xong</span>{% endif %}
+    </div>
+    {% endif %}
+    <div class="action-row" style="margin-top:12px">
+      <a class="btn btn-blue" href="{% url 'academic_etl:universities_list' run.pk %}">Open University table</a>
+      <a class="btn btn-blue" href="{% url 'academic_etl:majors_list' run.pk %}">Open Major table</a>
+      <a class="btn btn-grey" href="{% url 'academic_etl:clean_universities' run.pk %}">Clean Universities</a>
+      <a class="btn btn-grey" href="{% url 'academic_etl:clean_majors' run.pk %}">Clean Majors</a>
+      {% if run.status == "failed" %}
+      <form method="post" action="{% url 'academic_etl:resume_unified_run' run.pk %}" style="display:inline">
+        {% csrf_token %}
+        <button class="btn btn-blue" type="submit">Resume from checkpoint</button>
+      </form>
+      {% endif %}
+    </div>
+  </div>
+  <div class="state-grid">
+    <div class="state-stat"><div class="k">Ready seeds</div><div class="v">{{ progress.ready_to_crawl }}</div></div>
+    <div class="state-stat"><div class="k">Crawled seeds</div><div class="v">{{ progress.crawled }}</div></div>
+    <div class="state-stat"><div class="k">Pages fetched</div><div class="v">{{ progress.pages }}</div></div>
+    <div class="state-stat"><div class="k">Universities</div><div id="progress-universities" class="v">{{ progress.universities }}</div></div>
+    <div class="state-stat"><div class="k">Majors</div><div id="progress-majors" class="v">{{ progress.majors }}</div></div>
+    <div class="state-stat"><div class="k">Clean records</div><div class="v">{{ progress.clean_total }}</div></div>
+    <div class="state-stat"><div class="k">Not validated</div><div class="v">{{ progress.not_validated }}</div></div>
+    <div class="state-stat"><div class="k">Pending review</div><div class="v">{{ progress.review_pending }}</div></div>
+  </div>
+</section>
+
+<section class="metric-grid">
+  <div class="metric">
+    <div class="label">Seeds</div>
+    <div class="value">{{ progress.total_seeds }}</div>
+    <div class="hint">{{ progress.coverage_detail }}</div>
+  </div>
+  <div class="metric">
+    <div class="label">Crawled</div>
+    <div class="value">{{ progress.crawled }}</div>
+    <div class="hint">Official sites fetched</div>
+  </div>
+  <div class="metric">
+    <div class="label">Universities</div>
+    <div class="value">{{ progress.universities }}</div>
+    <div class="hint">Staged records</div>
+  </div>
+  <div class="metric">
+    <div class="label">Majors</div>
+    <div class="value">{{ progress.majors }}</div>
+    <div class="hint">Degree candidates</div>
+  </div>
+  <div class="metric">
+    <div class="label">Issues</div>
+    <div class="value">{{ progress.issues }}</div>
+    <div class="hint">Validation findings</div>
+  </div>
+</section>
+
+<section class="panel">
+  <div class="panel-head">
+    <h2>Run actions</h2>
+    <span class="badge b-info">click workflow</span>
+  </div>
+  <div class="panel-body">
+    <div class="grid-3">
+      <div class="panel-flat" style="margin:0">
+        <div class="panel-head"><h3>AI gap-fill after crawl</h3></div>
+        <div class="panel-body">
+          <p class="mut">Keep crawled/source data as primary, then use grounded AI
+          only for remaining empty fields. Existing staged values are not overwritten.</p>
+          <form method="post" action="{% url 'academic_etl:run_gemini_action' run.pk %}" class="action-row">
+            {% csrf_token %}
+            <button class="btn btn-ok" type="submit">Run / resume AI gap-fill</button>
+          </form>
+          <form method="post" action="{% url 'academic_etl:run_gemini_action' run.pk %}" class="action-row" style="margin-top:10px">
+            {% csrf_token %}
+            <input type="hidden" name="no_cache" value="1">
+            <button class="btn btn-grey" type="submit" title="Re-query every institution (ignores cache)">Re-query all (ignore cache)</button>
+          </form>
+          <hr style="margin:12px 0; border:0; border-top:1px solid #e5e7eb">
+          <p class="mut">Majors (1-to-many): for each staged university, Gemini lists
+          its programs in English with a source URL — exported as a separate CSV.</p>
+          <form method="post" action="{% url 'academic_etl:run_majors_action' run.pk %}" class="action-row">
+            {% csrf_token %}
+            <button class="btn btn-ok" type="submit">Get majors via Gemini</button>
+          </form>
+        </div>
+      </div>
+      {% if run.crawl_scope != "gemini_grounding" %}
+      <form method="post" action="{% url 'academic_etl:run_crawl_action' run.pk %}" class="panel-flat" style="margin:0">
+        {% csrf_token %}
+        <div class="panel-head"><h3>Continue crawl</h3></div>
+        <div class="panel-body">
+          <p class="mut">{{ progress.ready_to_crawl }} valid seed(s) are still available to crawl.</p>
+          <label>Crawl limit</label>
+          <input type="text" name="crawl_limit" value="5">
+          <label style="margin-top:10px">Max pages/site</label>
+          <input type="text" name="max_pages" value="6">
+          <button class="btn btn-blue" type="submit" style="margin-top:12px">Crawl remaining seeds</button>
+        </div>
+      </form>
+      {% endif %}
+      <div class="panel-flat" style="margin:0">
+        <div class="panel-head"><h3>Validate &amp; approve</h3></div>
+        <div class="panel-body">
+          <p class="mut">Recalculate validation, then one-click approve every valid/warnings record so the Clean pages and CSV export populate (needs_review rows stay for manual review).</p>
+          <form method="post" action="{% url 'academic_etl:run_validate_action' run.pk %}" class="action-row">
+            {% csrf_token %}
+            <button class="btn btn-cyan" type="submit">Validate run</button>
+          </form>
+          <form method="post" action="{% url 'academic_etl:run_approve_all_action' run.pk %}" class="action-row" style="margin-top:10px">
+            {% csrf_token %}
+            <button class="btn btn-ok" type="submit">✓ Approve all valid</button>
+          </form>
+        </div>
+      </div>
+      <div class="panel-flat" style="margin:0">
+        <div class="panel-head"><h3>Import</h3></div>
+        <div class="panel-body">
+          <form method="post" action="{% url 'academic_etl:run_import_action' run.pk %}" class="action-row">
+            {% csrf_token %}
+            <input type="hidden" name="dry_run" value="1">
+            <input type="hidden" name="approved_only" value="1">
+            <button class="btn btn-grey" type="submit">Dry-run import</button>
+          </form>
+          <form method="post" action="{% url 'academic_etl:run_import_action' run.pk %}" class="action-row" style="margin-top:10px">
+            {% csrf_token %}
+            <input type="hidden" name="dry_run" value="0">
+            <input type="hidden" name="approved_only" value="1">
+            <button class="btn btn-ok" type="submit">Live import approved</button>
+          </form>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<div class="subnav">
+  <a class="chip active" href="{% url 'academic_etl:run_detail' run.pk %}">Overview</a>
+  <a class="chip" href="{% url 'academic_etl:seeds_list' run.pk %}">Discovered institutions</a>
+  <a class="chip" href="{% url 'academic_etl:universities_list' run.pk %}">University review</a>
+  <a class="chip" href="{% url 'academic_etl:majors_list' run.pk %}">Major Catalog</a>
+  <a class="chip" href="{% url 'academic_etl:specializations_list' run.pk %}">Specializations</a>
+  <a class="chip" href="{% url 'academic_etl:clean_universities' run.pk %}">Clean Universities</a>
+  <a class="chip" href="{% url 'academic_etl:clean_majors' run.pk %}">Clean Majors</a>
+  <a class="chip" href="{% url 'academic_etl:import_preview' run.pk %}">Import readiness</a>
+</div>
+
+<section class="grid-3">
+  <div class="panel-flat">
+    <div class="panel-head"><h2>Seeds by status</h2></div>
+    <div class="table-wrap">
+      <table class="data-table">
+        <tr><th>Status</th><th class="num">Count</th></tr>
+        {% for s in seed_stats %}
+          <tr><td><span class="badge b-{{ s.status }}">{{ s.status }}</span></td><td class="num">{{ s.n }}</td></tr>
+        {% empty %}
+          <tr><td colspan="2" class="mut">No seeds.</td></tr>
+        {% endfor %}
+      </table>
+    </div>
+  </div>
+
+  <div class="panel-flat">
+    <div class="panel-head"><h2>University validation</h2></div>
+    <div class="table-wrap">
+      <table class="data-table">
+        <tr><th>Status</th><th class="num">Count</th></tr>
+        {% for s in uni_stats %}
+          <tr><td><span class="badge b-{{ s.validation_status }}">{{ s.validation_status }}</span></td><td class="num">{{ s.n }}</td></tr>
+        {% empty %}
+          <tr><td colspan="2" class="mut">No staged universities.</td></tr>
+        {% endfor %}
+      </table>
+    </div>
+  </div>
+
+  <div class="panel-flat">
+    <div class="panel-head"><h2>Review decisions</h2></div>
+    <div class="table-wrap">
+      <table class="data-table">
+        <tr><th>Status</th><th class="num">Count</th></tr>
+        {% for s in review_stats %}
+          <tr><td><span class="badge b-{{ s.review_status }}">{{ s.review_status }}</span></td><td class="num">{{ s.n }}</td></tr>
+        {% empty %}
+          <tr><td colspan="2" class="mut">No review decisions.</td></tr>
+        {% endfor %}
+      </table>
+    </div>
+  </div>
+</section>
+
+<section class="grid-2">
+  <div class="panel">
+    <div class="panel-head">
+      <h2>Recent validation issues</h2>
+      <span class="badge b-unknown">latest 20</span>
+    </div>
+    <div class="table-wrap">
+      <table class="data-table">
+        <tr><th>Severity</th><th>Entity</th><th>Field</th><th>Code</th><th>Message</th></tr>
+        {% for i in recent_issues %}
+        <tr>
+          <td><span class="badge b-{{ i.severity }}">{{ i.severity }}</span></td>
+          <td>
+            {% if i.entity_type == "university" %}
+              <a href="{% url 'academic_etl:university_detail' i.entity_id %}">{{ i.entity_type }}#{{ i.entity_id }}</a>
+            {% else %}
+              <a href="{% url 'academic_etl:program_detail' i.entity_id %}">{{ i.entity_type }}#{{ i.entity_id }}</a>
+            {% endif %}
+          </td>
+          <td class="mono">{{ i.field_name }}</td>
+          <td class="mono">{{ i.code }}</td>
+          <td>{{ i.message }}</td>
+        </tr>
+        {% empty %}
+          <tr><td colspan="5" class="mut">No issues. Run validation to populate this stream.</td></tr>
+        {% endfor %}
+      </table>
+    </div>
+  </div>
+
+  <div>
+    <div class="panel-flat">
+      <div class="panel-head"><h2>Majors by validation</h2></div>
+      <div class="table-wrap">
+        <table class="data-table">
+          <tr><th>Status</th><th class="num">Count</th></tr>
+          {% for s in program_stats %}
+            <tr><td><span class="badge b-{{ s.validation_status }}">{{ s.validation_status }}</span></td><td class="num">{{ s.n }}</td></tr>
+          {% empty %}
+            <tr><td colspan="2" class="mut">No programs extracted.</td></tr>
+          {% endfor %}
+        </table>
+      </div>
+    </div>
+
+    <div class="panel-flat">
+      <div class="panel-head"><h2>Import jobs</h2></div>
+      <div class="table-wrap">
+        <table class="data-table">
+          <tr><th>#</th><th>Mode</th><th>Status</th><th class="num">Created</th><th class="num">Updated</th><th class="num">Skipped</th></tr>
+          {% for job in import_jobs %}
+          <tr>
+            <td class="mono"><a href="{% url 'academic_etl:import_job_detail' job.pk %}">#{{ job.pk }}</a></td>
+            <td>{% if job.dry_run %}<span class="badge b-dry_run">dry-run</span>{% else %}<span class="badge b-valid">live</span>{% endif %}</td>
+            <td><span class="badge b-{{ job.status }}">{{ job.status }}</span></td>
+            <td class="num">{{ job.total_created }}</td>
+            <td class="num">{{ job.total_updated }}</td>
+            <td class="num">{{ job.total_skipped }}</td>
+          </tr>
+          {% empty %}
+            <tr><td colspan="6" class="mut">No import jobs yet.</td></tr>
+          {% endfor %}
+        </table>
+      </div>
+    </div>
+  </div>
+</section>
+<script>
+(() => {
+  const endpoint = "{% url 'academic_etl:run_progress_json' run.pk %}";
+  let timer = null;
+  const setText = (id, value) => {
+    const node = document.getElementById(id);
+    if (node) node.textContent = value ?? "";
+  };
+  const formatTime = (value) => value ? value.replace("T", " ").replace(/\.\d+(?=\+)/, "").replace("+00:00", " UTC") : "waiting";
+  const poll = async () => {
+    try {
+      const response = await fetch(endpoint, {cache: "no-store"});
+      if (!response.ok) return;
+      const data = await response.json();
+      setText("progress-label", data.phase_label);
+      setText("progress-detail", data.phase_detail);
+      setText("progress-coverage", data.coverage_detail);
+      setText("progress-percent", `${data.progress_pct}%`);
+      setText("progress-stage", `${data.stage_number}/${data.stage_count}`);
+      setText("progress-count", `${data.processed}/${data.total}`);
+      setText("progress-item", data.current_item || "waiting");
+      setText("progress-url", data.current_url ? `| ${data.current_url}` : "");
+      setText("progress-fanar-calls", data.fanar_calls);
+      setText("progress-gemini-calls", data.gemini_calls);
+      setText("progress-verified-fields", data.verified_fields);
+      setText("progress-field-errors", data.field_errors);
+      setText("progress-universities", data.universities);
+      setText("progress-majors", data.majors);
+      setText("progress-current-step", data.current_step || "waiting");
+      setText("progress-heartbeat", formatTime(data.heartbeat_at));
+      setText("progress-stage-name", data.stage || "waiting");
+      setText("progress-stale", data.is_stale ? "| stale" : "");
+      const bar = document.getElementById("progress-bar");
+      if (bar) bar.style.width = `${data.progress_pct}%`;
+      if (data.terminal && timer) clearInterval(timer);
+    } catch (_) {
+      // The no-JS/full-refresh fallback remains available.
+    }
+  };
+  timer = setInterval(poll, 3000);
+  poll();
+})();
+</script>
+{% endblock %}

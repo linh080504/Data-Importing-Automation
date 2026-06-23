@@ -1,0 +1,61 @@
+{% extends "academic_etl/base.html" %}
+{% block title %}Clean Universities - Run #{{ run.pk }}{% endblock %}
+{% block content %}
+<section class="page-head">
+  <div>
+    <p class="eyebrow">Clean Data</p>
+    <h1 class="page-title">Clean Universities - Run #{{ run.pk }}</h1>
+    <p class="lede">Approved or edited staging records with valid/warnings validation status. Rejected rows are hidden but kept for audit.</p>
+  </div>
+  <div class="toolbar">
+    <a class="btn btn-grey" href="{% url 'academic_etl:universities_list' run.pk %}">Review queue</a>
+    <a class="btn btn-blue" href="{% url 'academic_etl:import_preview' run.pk %}">Import preview</a>
+    <a class="btn btn-ok" href="{% url 'academic_etl:export_universities_csv' run.pk %}">⬇ Download universities CSV</a>
+  </div>
+</section>
+
+<form method="get" class="filter-form">
+  <div class="wide"><label>Search</label><input type="text" name="q" value="{{ filters.q }}" placeholder="name, slug, website"></div>
+  <div><label>Missing field</label><select name="missing_field"><option value="">none</option>{% for field in university_fields %}<option value="{{ field }}" {% if filters.missing_field == field %}selected{% endif %}>{{ field }}</option>{% endfor %}</select></div>
+  <div><label>Min confidence</label><input type="text" name="min_confidence" value="{{ filters.min_confidence }}" placeholder="0.75"></div>
+  <div><label>Sort</label><select name="sort">{% for sort in sort_choices %}<option value="{{ sort }}" {% if filters.sort == sort %}selected{% endif %}>{{ sort }}</option>{% endfor %}</select></div>
+  <div class="action-row"><button class="btn btn-blue" type="submit">Apply</button><a class="btn btn-grey" href="?">Reset</a></div>
+</form>
+
+<section class="panel">
+  <div class="panel-head">
+    <h2>Clean university staging table</h2>
+    <span class="badge b-valid">{{ universities|length }} clean rows</span>
+  </div>
+  <div class="table-wrap">
+    <table class="data-table">
+      <tr>
+        <th>Name</th><th>Reason</th><th>Scores</th><th>Evidence</th><th>Website</th><th>Location</th>
+        <th>Description</th><th>Slug</th><th>Financials</th><th class="num">Students</th><th>Email</th><th>Admissions URL</th><th></th>
+      </tr>
+      {% for uni in universities %}
+      <tr>
+        <td><a href="{% url 'academic_etl:university_detail' uni.pk %}">{{ uni.name|default:"(no name)" }}</a></td>
+        <td><span class="badge b-{{ uni.review_status }}">{{ uni.review_status }}</span> <span class="badge b-{{ uni.validation_status }}">{{ uni.validation_status }}</span>{% if uni.issue_count %}<br><span class="badge b-warning" style="margin-top:5px">{{ uni.issue_count }} review notes</span>{% endif %}</td>
+        <td>
+          <div class="score"><span>{{ uni.confidence_score|floatformat:2 }}</span><div class="progress {% if uni.confidence_score >= 0.75 %}ok{% elif uni.confidence_score >= 0.5 %}warn{% else %}bad{% endif %}"><span style="width:{% widthratio uni.confidence_score 1 100 %}%"></span></div></div>
+          <div class="score" style="margin-top:6px"><span>{{ uni.completeness_score|floatformat:2 }}</span><div class="progress {% if uni.completeness_score >= 0.75 %}ok{% elif uni.completeness_score >= 0.45 %}warn{% else %}bad{% endif %}"><span style="width:{% widthratio uni.completeness_score 1 100 %}%"></span></div></div>
+        </td>
+        <td><span class="badge b-info">{{ uni.evidence_count }} evidence</span></td>
+        <td>{% if uni.website %}<a href="{{ uni.website }}" target="_blank" rel="noopener">{{ uni.website|truncatechars:42 }}</a>{% else %}<span class="mut">missing</span>{% endif %}</td>
+        <td>{{ uni.location|truncatechars:40 }}</td>
+        <td>{{ uni.description|truncatechars:90 }}</td>
+        <td class="mono">{{ uni.slug|truncatechars:36 }}</td>
+        <td>{{ uni.financials|truncatechars:70 }}</td>
+        <td class="num">{{ uni.number_of_students|default:"-" }}</td>
+        <td>{{ uni.admissions_contact|default:"-" }}</td>
+        <td>{% if uni.admissions_page_link %}<a href="{{ uni.admissions_page_link }}" target="_blank" rel="noopener">admissions</a>{% else %}<span class="mut">missing</span>{% endif %}</td>
+        <td><a class="btn btn-grey" href="{% url 'academic_etl:university_detail' uni.pk %}">Open</a></td>
+      </tr>
+      {% empty %}
+        <tr><td colspan="13" class="mut">No clean universities match the filters.</td></tr>
+      {% endfor %}
+    </table>
+  </div>
+</section>
+{% endblock %}

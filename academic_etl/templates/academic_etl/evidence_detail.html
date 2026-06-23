@@ -1,0 +1,65 @@
+{% extends "academic_etl/base.html" %}
+{% block title %}Evidence #{{ ev.pk }}{% endblock %}
+{% block content %}
+<section class="page-head">
+  <div>
+    <p class="eyebrow">Field Provenance</p>
+    <h1 class="page-title">Evidence #{{ ev.pk }}</h1>
+    <p class="lede"><span class="mono">{{ ev.entity_type }}#{{ ev.entity_id }}.{{ ev.field_name }}</span></p>
+  </div>
+  <div class="toolbar">
+    {% if ev.entity_type == "university" %}
+      <a class="btn btn-grey" href="{% url 'academic_etl:university_detail' ev.entity_id %}">Back to university</a>
+    {% elif ev.entity_type == "program" %}
+      <a class="btn btn-grey" href="{% url 'academic_etl:program_detail' ev.entity_id %}">Back to program</a>
+    {% endif %}
+  </div>
+</section>
+
+<section class="grid-2">
+  <div class="panel">
+    <div class="panel-head">
+      <h2>Extracted value</h2>
+      <span class="badge b-{{ ev.extraction_method }}">{{ ev.extraction_method }}</span>
+    </div>
+    <div class="panel-body">
+      <div class="kv"><div class="k">Entity</div><div class="v">{{ ev.entity_type }} #{{ ev.entity_id }} {% if entity %}<span class="mut">({{ entity }})</span>{% endif %}</div></div>
+      <div class="kv"><div class="k">Field</div><div class="v mono">{{ ev.field_name }}</div></div>
+      <div class="kv"><div class="k">Extracted</div><div class="v">{{ ev.extracted_value|default:"-" }}</div></div>
+      <div class="kv"><div class="k">Normalized</div><div class="v">{{ ev.normalized_value|default:"-" }}</div></div>
+      <div class="kv"><div class="k">Confidence</div><div class="v">
+        <div class="score"><span>{{ ev.confidence_score|floatformat:2 }}</span><div class="progress {% if ev.confidence_score >= 0.75 %}ok{% elif ev.confidence_score >= 0.5 %}warn{% else %}bad{% endif %}"><span style="width:{% widthratio ev.confidence_score 1 100 %}%"></span></div></div>
+      </div></div>
+      <div class="kv"><div class="k">Extractor</div><div class="v mono">{{ ev.extractor_name }} ({{ ev.extraction_method }})</div></div>
+      <div class="kv"><div class="k">Crawled at</div><div class="v mut">{{ ev.crawled_at|default:"-" }}</div></div>
+    </div>
+  </div>
+
+  <div class="panel">
+    <div class="panel-head"><h2>Source metadata</h2></div>
+    <div class="panel-body">
+      <div class="kv"><div class="k">Source URL</div><div class="v">{% if ev.source_url %}<a href="{{ ev.source_url }}" target="_blank" rel="noopener">{{ ev.source_url|truncatechars:62 }}</a>{% else %}<span class="mut">missing</span>{% endif %}</div></div>
+      <div class="kv"><div class="k">Page title</div><div class="v">{{ ev.page_title|default:"-" }}</div></div>
+      <div class="kv"><div class="k">Page type</div><div class="v"><span class="badge b-skip">{{ ev.page_type|default:"unknown" }}</span></div></div>
+      <div class="kv"><div class="k">CSS selector</div><div class="v mono">{{ ev.css_selector|default:"-" }}</div></div>
+      <div class="kv"><div class="k">HTML hash</div><div class="v mono">{{ ev.raw_html_hash|default:"-" }}</div></div>
+    </div>
+  </div>
+</section>
+
+<section class="panel">
+  <div class="panel-head"><h2>Evidence text</h2></div>
+  <div class="panel-body">
+    <label>Snippet</label>
+    <div class="snippet">{{ ev.text_snippet|default:"No snippet captured." }}</div>
+    <label>Raw text</label>
+    <div class="panel-flat" style="padding:14px; box-shadow:none">
+      {{ ev.raw_text|truncatechars:2000|default:"No raw text captured." }}
+    </div>
+    {% if ev.validation_notes %}
+      <label style="margin-top:14px">Validation notes</label>
+      <div class="snippet">{{ ev.validation_notes }}</div>
+    {% endif %}
+  </div>
+</section>
+{% endblock %}

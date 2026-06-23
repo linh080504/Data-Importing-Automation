@@ -1,0 +1,202 @@
+{% extends "academic_etl/base.html" %}
+{% block title %}{{ uni.name }}{% endblock %}
+{% block content %}
+<section class="page-head">
+  <div>
+    <p class="eyebrow">University Record Review</p>
+    <h1 class="page-title">
+      {{ uni.name|default:"(no name)" }}
+      <span class="badge b-{{ uni.validation_status }}">{{ uni.validation_status }}</span>
+      <span class="badge b-{{ uni.review_status }}">{{ uni.review_status }}</span>
+    </h1>
+    <p class="lede">
+      Run <a href="{% url 'academic_etl:run_detail' uni.pipeline_run_id %}">#{{ uni.pipeline_run_id }}</a>
+      | type={{ uni.institution_type }}
+      | confidence={{ uni.confidence_score|floatformat:2 }}
+      | completeness={{ uni.completeness_score|floatformat:2 }}
+    </p>
+  </div>
+  <div class="toolbar">
+    <a class="btn btn-grey" href="{% url 'academic_etl:universities_list' uni.pipeline_run_id %}">Back to queue</a>
+    <a class="btn btn-cyan" href="{% url 'academic_etl:add_major' uni.pk %}">Add major</a>
+    <a class="btn btn-blue" href="{% url 'academic_etl:import_preview' uni.pipeline_run_id %}">Import preview</a>
+  </div>
+</section>
+
+<section class="grid-2">
+  <form method="post" action="{% url 'academic_etl:university_action' uni.pk %}" class="panel">
+    {% csrf_token %}
+    <div class="panel-head">
+      <h2>Field-level review</h2>
+      <div class="action-row">
+        <button class="btn btn-ok" name="action" value="approve">Approve</button>
+        <button class="btn btn-bad" name="action" value="delete">Reject</button>
+        <button class="btn btn-blue" name="action" value="edit">Save edits</button>
+      </div>
+    </div>
+    <div class="table-wrap">
+      <table class="data-table">
+        <tr><th style="width:150px">Field</th><th>Staged value</th><th>Current DB value</th><th style="width:360px">Evidence</th></tr>
+        {% for row in rows %}
+        <tr>
+          <td class="mono">
+            {{ row.field }}
+            {% if row.source_conflict %}<br><span class="badge b-needs_review">source conflict</span>{% endif %}
+            {% if row.field == "financials" or row.field == "university_campuses" or row.field == "admissions_contact" or row.field == "admissions_phone" or row.field == "global_rank" or row.field == "campus_student_life" %}
+              {% if row.quality.label and row.quality.label != "Unknown" and row.quality.label != "API error" %}
+              <br><span class="badge b-{{ row.quality.tone }}" title="{{ row.quality.title }}">{{ row.quality.label }}</span>
+              {% endif %}
+            {% endif %}
+          </td>
+          <td>
+            {% if row.input_type == "textarea" %}
+              <textarea name="{{ row.field }}" rows="4">{{ row.value|default_if_none:"" }}</textarea>
+            {% elif row.input_type == "bool" %}
+              <select name="{{ row.field }}">
+                <option value="">unknown</option>
+                <option value="true" {% if row.value %}selected{% endif %}>yes</option>
+                <option value="false" {% if row.value == False %}selected{% endif %}>no</option>
+              </select>
+            {% else %}
+              <input type="text" name="{{ row.field }}" value="{{ row.value|default_if_none:"" }}">
+            {% endif %}
+          </td>
+          <td class="mut">{{ row.db_value|default_if_none:""|truncatechars:130 }}</td>
+          <td>
+            {% for ev in row.evidence %}
+              <div class="snippet">
+                {% if ev.extraction_method == "wikidata" %}
+                  <span class="badge b-discovered">KB source</span>
+                {% elif ev.page_type == "homepage" or ev.page_type == "admissions" or ev.page_type == "tuition" or ev.page_type == "international" or ev.page_type == "campus_life" or ev.extraction_method == "rule" %}
+                  <span class="badge b-valid">official site</span>
+                {% endif %}
+                {{ ev.text_snippet|truncatechars:150 }}<br>
+                <span class="mut">
+                  conf {{ ev.confidence_score|floatformat:2 }} | {{ ev.extractor_name }} ({{ ev.extraction_method }})
+                  {% if ev.source_url %} | <a href="{{ ev.source_url }}" target="_blank" rel="noopener">source</a>{% endif %}
+                  | <a href="{% url 'academic_etl:evidence_detail' ev.pk %}">detail</a>
+                </span>
+              </div>
+            {% empty %}
+              <span class="mut">No evidence</span>
+            {% endfor %}
+          </td>
+        </tr>
+        {% endfor %}
+      </table>
+    </div>
+    <div class="panel-body">
+      <label>Review notes</label>
+      <textarea name="notes" rows="2">{{ uni.review_notes }}</textarea>
+    </div>
+  </form>
+
+  <aside>
+    <div class="panel-flat">
+      <div class="panel-head"><h2>Record intelligence</h2></div>
+      <div class="panel-body">
+        <div class="kv"><div class="k">Confidence</div><div class="v">
+          <div class="score"><span>{{ uni.confidence_score|floatformat:2 }}</span><div class="progress {% if uni.confidence_score >= 0.75 %}ok{% elif uni.confidence_score >= 0.5 %}warn{% else %}bad{% endif %}"><span style="width:{% widthratio uni.confidence_score 1 100 %}%"></span></div></div>
+        </div></div>
+        <div class="kv"><div class="k">Completeness</div><div class="v">
+          <div class="score"><span>{{ uni.completeness_score|floatformat:2 }}</span><div class="progress {% if uni.completeness_score >= 0.75 %}ok{% elif uni.completeness_score >= 0.45 %}warn{% else %}bad{% endif %}"><span style="width:{% widthratio uni.completeness_score 1 100 %}%"></span></div></div>
+        </div></div>
+        <div class="kv"><div class="k">Website</div><div class="v">{% if uni.website %}<a href="{{ uni.website }}" target="_blank" rel="noopener">{{ uni.website|truncatechars:46 }}</a>{% else %}<span class="mut">missing</span>{% endif %}</div></div>
+        <div class="kv"><div class="k">Target match</div><div class="v">
+          {% if existing %}
+            <span class="badge b-valid">DB #{{ existing.pk }}</span> <span class="mut">by {{ matched_by }}</span>
+          {% else %}
+            <span class="badge b-discovered">new record</span>
+          {% endif %}
+        </div></div>
+        <div class="kv"><div class="k">Majors</div><div class="v mono">{{ programs.count }}</div></div>
+      </div>
+    </div>
+
+    <div class="panel-flat">
+      <div class="panel-head"><h2>Validation issues</h2></div>
+      <div class="table-wrap">
+        <table class="data-table">
+          <tr><th>Severity</th><th>Field</th><th>Code</th></tr>
+          {% for i in issues %}
+          <tr>
+            <td><span class="badge b-{{ i.severity }}">{{ i.severity }}</span></td>
+            <td class="mono">{{ i.field_name }}</td>
+            <td class="mono">{{ i.code }}</td>
+          </tr>
+          <tr><td colspan="3" class="mut">{{ i.message }}</td></tr>
+          {% empty %}
+            <tr><td colspan="3" class="mut">None.</td></tr>
+          {% endfor %}
+        </table>
+      </div>
+    </div>
+  </aside>
+</section>
+
+<section class="panel">
+  <div class="panel-head">
+    <h2>Majors</h2>
+    <span class="badge b-unknown">{{ programs.count }} extracted</span>
+  </div>
+  <div class="table-wrap">
+    <table class="data-table">
+      <tr><th>Major</th><th>Level</th><th>Major URL</th><th>Higher-ed</th><th>Confidence</th><th>Validation</th><th>Review</th><th>Actions</th></tr>
+      {% for p in programs %}
+      <tr>
+        <td><a href="{% url 'academic_etl:program_detail' p.pk %}">{{ p.program_name }}</a></td>
+        <td><span class="badge b-skip">{{ p.degree_level }}</span></td>
+        <td>{% if p.program_url %}<a href="{{ p.program_url }}" target="_blank" rel="noopener">major url</a>{% else %}<span class="mut">missing</span>{% endif %}</td>
+        <td>
+          {% if p.is_higher_education_program %}
+            <span class="badge b-yes">yes</span>
+          {% elif p.is_higher_education_program == False %}
+            <span class="badge b-no">no</span>
+          {% else %}
+            <span class="badge b-uncertain">uncertain</span>
+          {% endif %}
+        </td>
+        <td>
+          <div class="score"><span>{{ p.confidence_score|floatformat:2 }}</span><div class="progress {% if p.confidence_score >= 0.75 %}ok{% elif p.confidence_score >= 0.5 %}warn{% else %}bad{% endif %}"><span style="width:{% widthratio p.confidence_score 1 100 %}%"></span></div></div>
+        </td>
+        <td><span class="badge b-{{ p.validation_status }}">{{ p.validation_status }}</span></td>
+        <td><span class="badge b-{{ p.review_status }}">{{ p.review_status }}</span></td>
+        <td>
+          <form method="post" action="{% url 'academic_etl:program_action' p.pk %}" class="action-row">
+            {% csrf_token %}
+            <input type="hidden" name="next" value="{{ request.path }}">
+            <button class="btn btn-ok btn-icon" name="action" value="approve" title="Approve">A</button>
+            <button class="btn btn-bad btn-icon" name="action" value="delete" title="Reject">R</button>
+          </form>
+        </td>
+      </tr>
+      {% empty %}
+        <tr><td colspan="8" class="mut">No majors extracted.</td></tr>
+      {% endfor %}
+    </table>
+  </div>
+</section>
+
+<section class="panel">
+  <div class="panel-head">
+    <h2>Crawled pages</h2>
+    <span class="badge b-unknown">source footprint</span>
+  </div>
+  <div class="table-wrap">
+    <table class="data-table">
+      <tr><th>Type</th><th>URL</th><th>Status</th><th>Depth</th><th>Title</th></tr>
+      {% for page in pages %}
+      <tr>
+        <td><span class="badge b-skip">{{ page.page_type }}</span></td>
+        <td><a href="{{ page.url }}" target="_blank" rel="noopener">{{ page.url|truncatechars:78 }}</a></td>
+        <td>{{ page.status_code|default_if_none:"-" }} {% if page.fetch_error %}<span class="mut">{{ page.fetch_error|truncatechars:44 }}</span>{% endif %}</td>
+        <td class="num">{{ page.depth }}</td>
+        <td class="mut">{{ page.title|truncatechars:70 }}</td>
+      </tr>
+      {% empty %}
+        <tr><td colspan="5" class="mut">No crawled pages. This may be a CSV-seeded record.</td></tr>
+      {% endfor %}
+    </table>
+  </div>
+</section>
+{% endblock %}

@@ -1,0 +1,48 @@
+{% extends "academic_etl/base.html" %}
+{% block title %}Add Major - {{ uni.name }}{% endblock %}
+{% block content %}
+<section class="page-head">
+  <div>
+    <p class="eyebrow">Manual Staging Entry</p>
+    <h1 class="page-title">Add major</h1>
+    <p class="lede">University: <a href="{% url 'academic_etl:university_detail' uni.pk %}">{{ uni.name }}</a>. The new major stays pending review and receives manual evidence.</p>
+  </div>
+  <a class="btn btn-grey" href="{% url 'academic_etl:university_detail' uni.pk %}">Back to university</a>
+</section>
+
+<form method="post" class="panel">
+  {% csrf_token %}
+  <div class="panel-head">
+    <h2>Major fields</h2>
+    <button class="btn btn-blue" type="submit">Create staging row</button>
+  </div>
+  <div class="panel-body">
+    <div class="filter-form" style="margin:0">
+      <div>
+        <label>Higher-ed</label>
+        <select name="is_higher_education_program">
+          <option value="">uncertain</option>
+          <option value="yes">yes</option>
+          <option value="no">no</option>
+        </select>
+      </div>
+      {% for field in fields %}
+        <div class="{% if field == 'description' or field == 'admission_requirements' or field == 'career_outcomes' %}wide{% endif %}">
+          <label>{{ field }}</label>
+          {% if field == "degree_level" %}
+            <select name="{{ field }}">
+              {% for value, label in degree_level_choices %}
+                <option value="{{ value }}" {% if value == "unknown" %}selected{% endif %}>{{ value }}</option>
+              {% endfor %}
+            </select>
+          {% elif field == "description" or field == "admission_requirements" or field == "career_outcomes" %}
+            <textarea name="{{ field }}" rows="4"></textarea>
+          {% else %}
+            <input type="text" name="{{ field }}">
+          {% endif %}
+        </div>
+      {% endfor %}
+    </div>
+  </div>
+</form>
+{% endblock %}

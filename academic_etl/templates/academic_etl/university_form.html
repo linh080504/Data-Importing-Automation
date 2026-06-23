@@ -1,0 +1,52 @@
+{% extends "academic_etl/base.html" %}
+{% block title %}Add University - Run #{{ run.pk }}{% endblock %}
+{% block content %}
+<section class="page-head">
+  <div>
+    <p class="eyebrow">Manual Staging Entry</p>
+    <h1 class="page-title">Add university - Run #{{ run.pk }}</h1>
+    <p class="lede">Create a manual staging row. It remains pending review and gets manual evidence for audit.</p>
+  </div>
+  <a class="btn btn-grey" href="{% url 'academic_etl:universities_list' run.pk %}">Back to university table</a>
+</section>
+
+<form method="post" class="panel">
+  {% csrf_token %}
+  <div class="panel-head">
+    <h2>University fields</h2>
+    <button class="btn btn-blue" type="submit">Create staging row</button>
+  </div>
+  <div class="panel-body">
+    <div class="filter-form" style="margin:0">
+      <div>
+        <label>institution_type</label>
+        <select name="institution_type">
+          {% for value, label in institution_type_choices %}
+            <option value="{{ value }}" {% if value == "university" %}selected{% endif %}>{{ value }}</option>
+          {% endfor %}
+        </select>
+      </div>
+      {% for field in fields %}
+        <div class="{% if field == 'description' or field == 'campus_student_life' %}wide{% endif %}">
+          <label>{{ field }}</label>
+          {% if field == "description" or field == "campus_student_life" %}
+            <textarea name="{{ field }}" rows="4"></textarea>
+          {% elif field == "sponsored" or field == "student_loan_available" or field == "housing_availability" or field == "immigration_support" %}
+            <select name="{{ field }}"><option value="">unknown</option><option value="true">yes</option><option value="false">no</option></select>
+          {% elif field == "country" %}
+            <input type="text" name="{{ field }}" value="{{ run.country_name }}">
+          {% elif field == "country_code" %}
+            <input type="text" name="{{ field }}" value="{{ run.country_code }}">
+          {% else %}
+            <input type="text" name="{{ field }}">
+          {% endif %}
+        </div>
+      {% endfor %}
+      <div class="wide">
+        <label>review notes</label>
+        <textarea name="notes" rows="3"></textarea>
+      </div>
+    </div>
+  </div>
+</form>
+{% endblock %}

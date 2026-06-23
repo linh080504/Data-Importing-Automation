@@ -1,0 +1,470 @@
+{% extends "academic_etl/base.html" %}
+{% block title %}Country Crawl Dashboard{% endblock %}
+{% block extra_head %}{% if auto_refresh %}<meta http-equiv="refresh" content="10">{% endif %}{% endblock %}
+{% block content %}
+<section class="page-head">
+  <div>
+    <p class="eyebrow">Data Engineering Workspace</p>
+    <h1 class="page-title">Academic ETL dashboard</h1>
+    <p class="lede">Monitor discovery, crawl coverage, staged data quality, review throughput and import readiness from one control plane.</p>
+  </div>
+  <div class="toolbar">
+    <a class="btn btn-ghost" href="{% url 'academic_etl:runs_list' %}">View runs</a>
+    {% if latest_run %}
+      <a class="btn btn-blue" href="{% url 'academic_etl:run_detail' latest_run.pk %}">Latest run #{{ latest_run.pk }}</a>
+    {% endif %}
+  </div>
+</section>
+
+{% if latest_reset_job %}
+<section class="status-banner {% if latest_reset_job.status == 'failed' %}bad{% elif latest_reset_job.status == 'completed' %}ok{% else %}warn{% endif %}">
+  <div>
+    <p class="eyebrow">Data reset</p>
+    <div class="state-title">{{ latest_reset_job.status|upper }}</div>
+    <div class="state-detail">
+      mode={{ latest_reset_job.mode }} | deleted={{ latest_reset_job.deleted_count }}
+      {% if latest_reset_job.error_message %}| {{ latest_reset_job.error_message }}{% endif %}
+    </div>
+  </div>
+</section>
+{% endif %}
+
+<section class="panel">
+  <div class="panel-head">
+    <h2>Start Pipeline Run</h2>
+    <div>
+      {% for p in llm_providers %}
+        <span class="badge {% if p.configured %}b-valid{% else %}b-error{% endif %}" style="margin-left:4px">{{ p.name }}: {% if p.configured %}ready{% else %}no key{% endif %}</span>
+      {% endfor %}
+    </div>
+  </div>
+  <form method="post" action="{% url 'academic_etl:start_unified_run' %}" class="filter-form" style="margin:0; border:0; border-radius:0">
+    {% csrf_token %}
+    <div>
+      <label>Country</label>
+      <select name="country">
+        {% for name, code in country_options %}
+          <option value="{{ name }}">{{ name }} ({{ code }})</option>
+        {% endfor %}
+      </select>
+    </div>
+    <div>
+      <label>Mode</label>
+      <select name="mode">
+        <option value="fast" selected>Fast - crawl-first + AI gap-fill (~5 min)</option>
+        <option value="thorough">Thorough - official crawl + AI gap-fill (~20 min)</option>
+      </select>
+    </div>
+    <div class="action-row">
+      <button class="btn btn-ok" type="submit" {% if reset_active %}disabled{% endif %}>Start pipeline</button>
+    </div>
+    <div class="wide mut">
+      <strong>Fast:</strong> Wikipedia discover &rarr; public web/official-source scrape &rarr; AI fills only remaining verified gaps.<br>
+      <strong>Thorough:</strong> Wikipedia discover &rarr; deeper official-site crawl &rarr; AI fills only remaining verified gaps. Higher accuracy.
+    </div>
+  </form>
+</section>
+
+<section class="metric-grid">
+  <div class="metric">
+    <div class="label">Pipeline runs</div>
+    <div class="value">{{ total_runs }}</div>
+    <div class="hint">Country-level crawl batches</div>
+  </div>
+  <div class="metric">
+    <div class="label">Discovered seeds</div>
+    <div class="value">{{ total_seeds }}</div>
+    <div class="hint">Institution candidates</div>
+  </div>
+  <div class="metric">
+    <div class="label">Staged universities</div>
+    <div class="value">{{ total_universities }}</div>
+    <div class="hint">{{ pending_reviews }} pending review</div>
+  </div>
+  <div class="metric">
+    <div class="label">Staged majors</div>
+    <div class="value">{{ total_programs }}</div>
+    <div class="hint">Degree candidates extracted</div>
+  </div>
+  <div class="metric">
+    <div class="label">Clean staging</div>
+    <div class="value">{{ total_clean_universities }}</div>
+    <div class="hint">{{ total_clean_majors }} clean majors</div>
+  </div>
+</section>
+
+<section class="chart-grid">
+  <div class="panel">
+    <div class="panel-head"><h2>ETL Funnel</h2><span class="badge b-info">coverage</span></div>
+    <div class="panel-body" style="height:220px"><canvas id="chartFunnel"></canvas></div>
+  </div>
+  <div class="panel">
+    <div class="panel-head"><h2>Validation Distribution</h2><span class="badge b-info">quality</span></div>
+    <div class="panel-body" style="height:220px"><canvas id="chartValidation"></canvas></div>
+  </div>
+  <div class="panel">
+    <div class="panel-head"><h2>Review Status</h2><span class="badge b-pending">workflow</span></div>
+    <div class="panel-body" style="height:220px"><canvas id="chartReview"></canvas></div>
+  </div>
+  <div class="panel">
+    <div class="panel-head"><h2>Degree Levels</h2><span class="badge b-info">catalog</span></div>
+    <div class="panel-body" style="height:220px"><canvas id="chartDegree"></canvas></div>
+  </div>
+</section>
+{% if country_json %}
+<section class="panel">
+  <div class="panel-head"><h2>Universities by Country</h2><span class="badge b-discovered">distribution</span></div>
+  <div class="panel-body" style="height:280px"><canvas id="chartCountry"></canvas></div>
+</section>
+{% endif %}
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4/dist/chart.umd.min.js"></script>
+<script>
+const COLORS = {ok:'#15803d',warn:'#d97706',bad:'#b91c1c',blue:'#2563eb',cyan:'#0891b2',grey:'#94a3b8',purple:'#7c3aed',pink:'#db2777'};
+Chart.defaults.font.family = 'Inter, system-ui, sans-serif';
+Chart.defaults.font.size = 12;
+Chart.defaults.plugins.legend.labels.usePointStyle = true;
+Chart.defaults.plugins.legend.labels.pointStyle = 'circle';
+
+// ETL Funnel — horizontal bar
+new Chart(document.getElementById('chartFunnel'), {
+  type: 'bar',
+  data: {
+    labels: {{ funnel_json|safe }}.map(r => r.label),
+    datasets: [{
+      data: {{ funnel_json|safe }}.map(r => r.value),
+      backgroundColor: [COLORS.blue, COLORS.cyan, COLORS.ok, COLORS.purple, COLORS.ok],
+      borderRadius: 4, barThickness: 22,
+    }]
+  },
+  options: {indexAxis:'y', responsive:true, maintainAspectRatio:false, plugins:{legend:{display:false}},
+    scales:{x:{grid:{display:false}},y:{grid:{display:false}}}}
+});
+
+// Validation — doughnut
+new Chart(document.getElementById('chartValidation'), {
+  type: 'doughnut',
+  data: {
+    labels: {{ validation_json|safe }}.map(r => r.label),
+    datasets: [{
+      data: {{ validation_json|safe }}.map(r => r.count),
+      backgroundColor: [COLORS.ok, COLORS.warn, COLORS.bad, COLORS.cyan],
+      borderWidth: 2, borderColor: '#fff',
+    }]
+  },
+  options: {responsive:true, maintainAspectRatio:false, cutout:'55%',
+    plugins:{legend:{position:'right',labels:{padding:12}}}}
+});
+
+// Review — doughnut
+new Chart(document.getElementById('chartReview'), {
+  type: 'doughnut',
+  data: {
+    labels: {{ review_json|safe }}.map(r => r.label),
+    datasets: [{
+      data: {{ review_json|safe }}.map(r => r.count),
+      backgroundColor: [COLORS.warn, COLORS.ok, COLORS.bad, COLORS.grey],
+      borderWidth: 2, borderColor: '#fff',
+    }]
+  },
+  options: {responsive:true, maintainAspectRatio:false, cutout:'55%',
+    plugins:{legend:{position:'right',labels:{padding:12}}}}
+});
+
+// Degree levels — horizontal bar
+new Chart(document.getElementById('chartDegree'), {
+  type: 'bar',
+  data: {
+    labels: {{ degree_json|safe }}.map(r => r.label),
+    datasets: [{
+      data: {{ degree_json|safe }}.map(r => r.count),
+      backgroundColor: [COLORS.blue,COLORS.cyan,COLORS.purple,COLORS.ok,COLORS.warn,COLORS.pink,COLORS.grey,COLORS.bad],
+      borderRadius: 4, barThickness: 18,
+    }]
+  },
+  options: {indexAxis:'y', responsive:true, maintainAspectRatio:false, plugins:{legend:{display:false}},
+    scales:{x:{grid:{display:false}},y:{grid:{display:false}}}}
+});
+
+// Country distribution — vertical bar (if data exists)
+{% if country_json %}
+new Chart(document.getElementById('chartCountry'), {
+  type: 'bar',
+  data: {
+    labels: {{ country_json|safe }}.map(r => r.country || 'Unknown'),
+    datasets: [{
+      label: 'Universities',
+      data: {{ country_json|safe }}.map(r => r.n),
+      backgroundColor: COLORS.blue,
+      borderRadius: 4, barThickness: 28,
+    }]
+  },
+  options: {responsive:true, maintainAspectRatio:false, plugins:{legend:{display:false}},
+    scales:{x:{grid:{display:false}},y:{beginAtZero:true,grid:{color:'#f0f0f0'}}}}
+});
+{% endif %}
+</script>
+
+<section class="panel">
+  <div class="panel-head">
+    <h2>University field-quality matrix</h2>
+    <span class="badge b-info">CSV fields</span>
+  </div>
+  <div class="table-wrap">
+    <table class="data-table">
+      <tr>
+        <th>Field</th><th class="num">Filled</th><th>Completeness</th>
+        <th class="num">Missing</th><th class="num">Evidence</th><th>Evidence coverage</th><th>Avg confidence</th>
+      </tr>
+      {% for field in field_quality %}
+      <tr>
+        <td class="mono">{{ field.field }}</td>
+        <td class="num">{{ field.filled }}</td>
+        <td><div class="progress {% if field.filled_pct >= 75 %}ok{% elif field.filled_pct >= 40 %}warn{% else %}bad{% endif %}"><span style="width:{{ field.filled_pct }}%"></span></div></td>
+        <td class="num">{{ field.missing }}</td>
+        <td class="num">{{ field.evidence_count }}</td>
+        <td><div class="progress {% if field.evidence_pct >= 75 %}ok{% elif field.evidence_pct >= 40 %}warn{% else %}bad{% endif %}"><span style="width:{{ field.evidence_pct }}%"></span></div></td>
+        <td>
+          <div class="score">
+            <span>{{ field.avg_confidence|floatformat:2 }}</span>
+            <div class="progress {% if field.avg_confidence >= 0.75 %}ok{% elif field.avg_confidence >= 0.5 %}warn{% else %}bad{% endif %}"><span style="width:{{ field.avg_confidence_pct }}%"></span></div>
+          </div>
+        </td>
+      </tr>
+      {% endfor %}
+    </table>
+  </div>
+</section>
+
+<section class="grid-3">
+  <div class="panel-flat">
+    <div class="panel-head">
+      <h2>Quality snapshot</h2>
+      <span class="badge b-discovered">staging</span>
+    </div>
+    <div class="panel-body">
+      <div class="kv"><div class="k">Valid</div><div class="v"><span class="badge b-valid">{{ valid_universities }}</span></div></div>
+      <div class="kv"><div class="k">Warnings</div><div class="v"><span class="badge b-warnings">{{ warning_universities }}</span></div></div>
+      <div class="kv"><div class="k">Invalid</div><div class="v"><span class="badge b-invalid">{{ invalid_universities }}</span></div></div>
+      <div class="kv"><div class="k">Evidence rows</div><div class="v mono">{{ total_evidence }}</div></div>
+      <div class="kv"><div class="k">Validation issues</div><div class="v mono">{{ total_issues }}</div></div>
+    </div>
+  </div>
+
+  <div class="panel-flat">
+    <div class="panel-head">
+      <h2>Review queue</h2>
+      <span class="badge b-pending">human gate</span>
+    </div>
+    <div class="panel-body">
+      <div class="kv"><div class="k">Pending</div><div class="v"><span class="badge b-pending">{{ pending_reviews }}</span></div></div>
+      <div class="kv"><div class="k">Approved</div><div class="v"><span class="badge b-approved">{{ approved_reviews }}</span></div></div>
+      <div class="kv"><div class="k">Rejected</div><div class="v"><span class="badge b-rejected">{{ rejected_reviews }}</span></div></div>
+      {% if latest_run %}
+        <div class="kv"><div class="k">Current focus</div><div class="v"><a href="{% url 'academic_etl:universities_list' latest_run.pk %}">Review universities in run #{{ latest_run.pk }}</a></div></div>
+      {% endif %}
+    </div>
+  </div>
+
+  <div class="panel-flat">
+    <div class="panel-head">
+      <h2>Latest run</h2>
+      {% if latest_run %}<span class="badge b-{{ latest_run.status }}">{{ latest_run_progress.phase_label }}</span>{% endif %}
+    </div>
+    <div class="panel-body">
+      {% if latest_run %}
+        <div class="kv"><div class="k">Country</div><div class="v">{{ latest_run.country_name }} {{ latest_run.country_code }}</div></div>
+        <div class="kv"><div class="k">State</div><div class="v">{{ latest_run_progress.phase_detail }}</div></div>
+        <div class="kv"><div class="k">Seed progress</div><div class="v">
+          <div class="progress {% if latest_run_progress.tone == 'ok' %}ok{% elif latest_run_progress.tone == 'bad' %}bad{% elif latest_run_progress.tone == 'warn' %}warn{% endif %}">
+            <span style="width:{{ latest_run_progress.progress_pct }}%"></span>
+          </div>
+          <div class="mut mono">{{ latest_run_progress.coverage_detail }}</div>
+        </div></div>
+        <div class="kv"><div class="k">Staging data</div><div class="v mono">{{ latest_run_progress.universities }} universities | {{ latest_run_progress.majors }} majors</div></div>
+        <div class="kv"><div class="k">Mode</div><div class="v mono">{{ latest_run_progress.execution_mode|title }}</div></div>
+        <div class="kv"><div class="k">Provider</div><div class="v mono">{{ latest_run.seed_provider }}</div></div>
+        <div class="kv"><div class="k">Created</div><div class="v mut">{{ latest_run.created_at|date:"Y-m-d H:i" }}</div></div>
+        <div class="action-row" style="margin-top:12px">
+          <a class="btn btn-blue" href="{% url 'academic_etl:run_detail' latest_run.pk %}">Open run</a>
+          <a class="btn btn-grey" href="{% url 'academic_etl:import_preview' latest_run.pk %}">Import preview</a>
+        </div>
+      {% else %}
+        <p class="mut">No runs yet.</p>
+      {% endif %}
+    </div>
+  </div>
+</section>
+
+<section class="panel">
+  <div class="panel-head">
+    <h2>Recent pipeline runs</h2>
+    <a class="btn btn-grey" href="{% url 'academic_etl:runs_list' %}">All runs</a>
+  </div>
+  <div class="table-wrap">
+    <table class="data-table">
+      <tr>
+        <th>#</th><th>Country</th><th>State</th><th class="num">Seeds</th>
+        <th class="num">Pages</th><th class="num">Universities</th><th class="num">Majors</th><th class="num">Clean</th><th>Created</th>
+      </tr>
+      {% for run in runs %}
+      <tr>
+        <td class="mono"><a href="{% url 'academic_etl:run_detail' run.pk %}">#{{ run.pk }}</a></td>
+        <td>
+          <strong>{{ run.country_name }} {{ run.country_code }}</strong>
+          <div class="mut mono">{{ run.progress.execution_mode|title }} | {{ run.seed_provider }}</div>
+        </td>
+        <td class="status-cell">
+          <span class="badge b-{{ run.status }}">{{ run.progress.phase_label }}</span>
+          <div class="mut mono">{{ run.progress.coverage_detail }}</div>
+        </td>
+        <td class="num">{{ run.progress.total_seeds }}</td>
+        <td class="num">{{ run.progress.pages }}</td>
+        <td class="num">{{ run.progress.universities }}</td>
+        <td class="num">{{ run.progress.majors }}</td>
+        <td class="num">{{ run.progress.clean_total }}</td>
+        <td class="mut nowrap">{{ run.created_at|date:"Y-m-d H:i" }}</td>
+      </tr>
+      {% empty %}
+      <tr><td colspan="9" class="mut">No runs yet. Use the command cookbook below to create one.</td></tr>
+      {% endfor %}
+    </table>
+  </div>
+</section>
+
+
+{% if schedules %}
+<section class="panel">
+  <div class="panel-head">
+    <h2>Scheduled Crawls</h2>
+    <a class="btn btn-grey" href="{% url 'academic_etl:schedules_list' %}">Manage schedules</a>
+  </div>
+  <div class="table-wrap">
+    <table class="data-table">
+      <tr><th>Country</th><th>Frequency</th><th>Strategy</th><th>Active</th><th>Last run</th><th>Next run</th><th>Errors</th></tr>
+      {% for s in schedules %}
+      <tr>
+        <td><strong>{{ s.country_name }}</strong> <span class="mut">({{ s.country_code }})</span></td>
+        <td><span class="badge b-info">{{ s.frequency }}</span></td>
+        <td class="mono">{{ s.strategy }}</td>
+        <td><span class="badge {% if s.is_active %}b-valid{% else %}b-error{% endif %}">{% if s.is_active %}yes{% else %}no{% endif %}</span></td>
+        <td class="mut nowrap">{% if s.last_run_at %}{{ s.last_run_at|date:"Y-m-d H:i" }}{% else %}never{% endif %}</td>
+        <td class="mut nowrap">{% if s.next_run_at %}{{ s.next_run_at|date:"Y-m-d H:i" }}{% else %}pending{% endif %}</td>
+        <td class="num">{% if s.error_count %}<span class="badge b-error">{{ s.error_count }}</span>{% else %}0{% endif %}</td>
+      </tr>
+      {% endfor %}
+    </table>
+  </div>
+</section>
+{% endif %}
+
+<section class="panel">
+  <div class="panel-head">
+    <h2>Data Management</h2>
+    <span class="badge b-error">destructive</span>
+  </div>
+  <div style="padding:16px">
+    <div class="grid-3" style="gap:12px">
+      <div class="panel-flat">
+        <div class="panel-head"><h2>Clear staging data</h2></div>
+        <div class="panel-body">
+          <p class="mut">Delete ALL pipeline runs, seeds, crawled pages, staged universities/programs, evidence, and validation issues. Production data is NOT affected.</p>
+          <div class="kv"><div class="k">Runs</div><div class="v mono">{{ total_runs }}</div></div>
+          <div class="kv"><div class="k">Seeds</div><div class="v mono">{{ total_seeds }}</div></div>
+          <div class="kv"><div class="k">Universities</div><div class="v mono">{{ total_universities }}</div></div>
+          <div class="kv"><div class="k">Programs</div><div class="v mono">{{ total_programs }}</div></div>
+          <div class="kv"><div class="k">Evidence</div><div class="v mono">{{ total_evidence }}</div></div>
+          <form method="post" action="{% url 'academic_etl:clear_staging' %}" onsubmit="return confirm('DELETE all staging data (runs, seeds, universities, programs, evidence)? This cannot be undone.')">
+            {% csrf_token %}
+            <div class="action-row" style="margin-top:12px">
+              <button class="btn btn-bad" type="submit" {% if total_runs == 0 %}disabled{% endif %}>Clear all staging</button>
+            </div>
+          </form>
+        </div>
+      </div>
+      <div class="panel-flat">
+        <div class="panel-head"><h2>Clear production data</h2></div>
+        <div class="panel-body">
+          <p class="mut">Delete ALL imported universities and programs from the production database.</p>
+          <div class="kv"><div class="k">Universities</div><div class="v mono">{{ total_imported }}</div></div>
+          <div class="kv"><div class="k">Programs</div><div class="v mono">{{ total_imported_programs }}</div></div>
+          <form method="post" action="{% url 'academic_etl:clear_production' %}" onsubmit="return confirm('DELETE all production universities and programs? This cannot be undone.')">
+            {% csrf_token %}
+            <div class="action-row" style="margin-top:12px">
+              <button class="btn btn-bad" type="submit" {% if total_imported == 0 %}disabled{% endif %}>Clear production</button>
+            </div>
+          </form>
+        </div>
+      </div>
+      <div class="panel-flat">
+        <div class="panel-head"><h2>Clear everything</h2></div>
+        <div class="panel-body">
+          <p class="mut">Delete ALL staging AND production data. Country configs and schedules are preserved.</p>
+          <form method="post" action="{% url 'academic_etl:clear_all' %}" onsubmit="return confirm('DELETE ALL DATA (staging + production)? Only country configs and schedules will be preserved. This cannot be undone.')">
+            {% csrf_token %}
+            <div class="action-row" style="margin-top:12px">
+              <button class="btn btn-bad" type="submit" {% if reset_active or total_runs == 0 and total_imported == 0 %}disabled{% endif %}>Clear everything</button>
+            </div>
+          </form>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section class="panel">
+  <div class="panel-head">
+    <h2>Command cookbook</h2>
+    <span class="badge b-unknown">CLI workflow</span>
+  </div>
+  <div class="table-wrap">
+    <table class="data-table">
+      <tr><th>Step</th><th>Command</th><th>Purpose</th></tr>
+      <tr>
+        <td>Discover</td>
+        <td class="mono">python manage.py discover_country_institutions --country "India" --limit 100</td>
+        <td class="mut">Create seeds from Hipo Labs and classify them.</td>
+      </tr>
+      <tr>
+        <td>Crawl</td>
+        <td class="mono">python manage.py crawl_country --country "India" --limit 20</td>
+        <td class="mut">Fetch official pages and extract staged records.</td>
+      </tr>
+      <tr>
+        <td>CSV seed</td>
+        <td class="mono">python manage.py seed_from_csv --csv "sample_data/University_Import_Clean-7.csv" --country "India"</td>
+        <td class="mut">Load curated CSV rows directly into staging.</td>
+      </tr>
+      <tr>
+        <td>Validate</td>
+        <td class="mono">python manage.py validate_country_run --run-id &lt;id&gt;</td>
+        <td class="mut">Score completeness, confidence and data issues.</td>
+      </tr>
+      <tr>
+        <td>Dry-run import</td>
+        <td class="mono">python manage.py import_country_run --run-id &lt;id&gt; --approved-only --dry-run</td>
+        <td class="mut">Preview create/update/skip decisions before live import.</td>
+      </tr>
+      <tr>
+        <td>Fanar build</td>
+        <td class="mono">python manage.py build_country_fanar --country "India" --max 200 --with-majors</td>
+        <td class="mut">Wikipedia roster + Fanar API enrichment (50 req/min). Includes specializations.</td>
+      </tr>
+      <tr>
+        <td>Setup countries</td>
+        <td class="mono">python manage.py setup_country_configs</td>
+        <td class="mut">Bootstrap country configs (currency, denominations, degree mapping) for 30+ countries.</td>
+      </tr>
+      <tr>
+        <td>Schedule crawl</td>
+        <td class="mono">python manage.py schedule_crawls --country "Vietnam" --frequency monthly</td>
+        <td class="mut">Set up recurring crawl automation for a country.</td>
+      </tr>
+      <tr>
+        <td>Refresh rates</td>
+        <td class="mono">python manage.py refresh_exchange_rates</td>
+        <td class="mut">Fetch latest currency exchange rates for financial format standardization.</td>
+      </tr>
+    </table>
+  </div>
+</section>
+{% endblock %}

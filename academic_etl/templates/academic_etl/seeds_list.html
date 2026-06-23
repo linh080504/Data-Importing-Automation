@@ -1,0 +1,78 @@
+{% extends "academic_etl/base.html" %}
+{% block title %}Seeds - Run #{{ run.pk }}{% endblock %}
+{% block content %}
+<section class="page-head">
+  <div>
+    <p class="eyebrow">Discovery Layer</p>
+    <h1 class="page-title">Discovered institutions - Run #{{ run.pk }}</h1>
+    <p class="lede">{{ run.country_name }} {{ run.country_code }} candidates classified before crawl. Only valid higher-education seeds are crawlable.</p>
+  </div>
+  <div class="toolbar">
+    <a class="btn btn-grey" href="{% url 'academic_etl:run_detail' run.pk %}">Run detail</a>
+    <a class="btn btn-blue" href="{% url 'academic_etl:universities_list' run.pk %}">Review universities</a>
+  </div>
+</section>
+
+<div class="filters">
+  <span>Filter</span>
+  <a href="?" class="{% if not status_filter %}active{% endif %}">all</a>
+  <a href="?status=valid">valid</a>
+  <a href="?status=invalid">invalid</a>
+  <a href="?status=needs_review">needs_review</a>
+  <a href="?status=crawled">crawled</a>
+  <a href="?status=crawl_failed">crawl_failed</a>
+  {% if status_filter %}<span class="badge b-{{ status_filter }}">{{ status_filter }}</span>{% endif %}
+</div>
+
+<section class="panel">
+  <div class="panel-head">
+    <h2>Institution seeds</h2>
+    <span class="badge b-unknown">{{ seeds|length }} rows</span>
+  </div>
+  <div class="table-wrap">
+    <table class="data-table">
+      <tr><th>Name</th><th>Type</th><th>Status</th><th>Confidence</th><th>Website</th><th>Region</th><th>Source</th><th>Wikidata</th><th>Wikipedia</th></tr>
+      {% for seed in seeds %}
+      <tr>
+        <td>{{ seed.name }}</td>
+        <td><span class="badge b-{% if seed.is_higher_education %}valid{% else %}invalid{% endif %}">{{ seed.institution_type }}</span></td>
+        <td><span class="badge b-{{ seed.status }}">{{ seed.status }}</span></td>
+        <td>
+          <div class="score">
+            <span>{{ seed.confidence_score|floatformat:2 }}</span>
+            <div class="progress {% if seed.confidence_score >= 0.75 %}ok{% elif seed.confidence_score >= 0.5 %}warn{% else %}bad{% endif %}">
+              <span style="width:{% widthratio seed.confidence_score 1 100 %}%"></span>
+            </div>
+          </div>
+        </td>
+        <td>
+          {% if seed.website %}
+            <a href="{{ seed.website }}" target="_blank" rel="noopener">{{ seed.website|truncatechars:50 }}</a>
+          {% else %}
+            <span class="mut">missing</span>
+          {% endif %}
+        </td>
+        <td class="mut">{{ seed.region|default:"-" }}</td>
+        <td class="mono">{{ seed.source_name|default:"-" }}</td>
+        <td class="mono">
+          {% if seed.wikidata_qid %}
+            <a href="https://www.wikidata.org/wiki/{{ seed.wikidata_qid }}" target="_blank" rel="noopener">{{ seed.wikidata_qid }}</a>
+          {% else %}
+            <span class="mut">-</span>
+          {% endif %}
+        </td>
+        <td>
+          {% if seed.wikipedia_url %}
+            <a href="{{ seed.wikipedia_url }}" target="_blank" rel="noopener">article</a>
+          {% else %}
+            <span class="mut">-</span>
+          {% endif %}
+        </td>
+      </tr>
+      {% empty %}
+        <tr><td colspan="9" class="mut">No seeds.</td></tr>
+      {% endfor %}
+    </table>
+  </div>
+</section>
+{% endblock %}

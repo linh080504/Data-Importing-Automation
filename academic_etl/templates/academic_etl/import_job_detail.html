@@ -1,0 +1,91 @@
+{% extends "academic_etl/base.html" %}
+{% block title %}Import job #{{ job.pk }}{% endblock %}
+{% block content %}
+<section class="page-head">
+  <div>
+    <p class="eyebrow">Import Audit</p>
+    <h1 class="page-title">
+      Import job #{{ job.pk }}
+      <span class="badge b-{{ job.status }}">{{ job.status }}</span>
+      {% if job.dry_run %}<span class="badge b-dry_run">dry-run</span>{% else %}<span class="badge b-valid">live</span>{% endif %}
+    </h1>
+    <p class="lede">
+      Run <a href="{% url 'academic_etl:run_detail' job.pipeline_run_id %}">#{{ job.pipeline_run_id }}</a>
+      | approved_only={{ job.approved_only }}
+      | threshold={{ job.confidence_threshold }}
+    </p>
+  </div>
+  <a class="btn btn-grey" href="{% url 'academic_etl:import_preview' job.pipeline_run_id %}">Back to preview</a>
+</section>
+
+{% if job.error_message %}
+  <div class="snippet">{{ job.error_message }}</div>
+{% endif %}
+
+<section class="metric-grid">
+  <div class="metric"><div class="label">Processed</div><div class="value">{{ job.total_processed }}</div><div class="hint">Entities evaluated</div></div>
+  <div class="metric"><div class="label">Created</div><div class="value">{{ job.total_created }}</div><div class="hint">Create or would-create</div></div>
+  <div class="metric"><div class="label">Updated</div><div class="value">{{ job.total_updated }}</div><div class="hint">Update or would-update</div></div>
+  <div class="metric"><div class="label">Skipped</div><div class="value">{{ job.total_skipped }}</div><div class="hint">Ineligible or unchanged</div></div>
+  <div class="metric"><div class="label">Finished</div><div class="value" style="font-size:1rem">{{ job.finished_at|date:"Y-m-d H:i"|default:"-" }}</div><div class="hint">Job completion time</div></div>
+</section>
+
+<div class="filters">
+  <span>Action</span>
+  <a href="?" class="{% if not action_filter %}active{% endif %}">all</a>
+  <a href="?action=create">create</a>
+  <a href="?action=update">update</a>
+  <a href="?action=would_create">would_create</a>
+  <a href="?action=would_update">would_update</a>
+  <a href="?action=skip">skip</a>
+  <a href="?action=error">error</a>
+  {% if action_filter %}<span class="badge b-{{ action_filter }}">{{ action_filter }}</span>{% endif %}
+</div>
+
+<section class="panel">
+  <div class="panel-head">
+    <h2>Import log</h2>
+    <span class="badge b-unknown">{{ logs|length }} rows</span>
+  </div>
+  <div class="table-wrap">
+    <table class="data-table">
+      <tr><th>Entity</th><th>Action</th><th>Matched by</th><th>Target</th><th>Message</th><th>Diff</th></tr>
+      {% for log in logs %}
+      <tr>
+        <td>
+          {% if log.entity_type == "university" %}
+            <a href="{% url 'academic_etl:university_detail' log.entity_id %}">{{ log.entity_type }}#{{ log.entity_id }}</a>
+          {% else %}
+            <a href="{% url 'academic_etl:program_detail' log.entity_id %}">{{ log.entity_type }}#{{ log.entity_id }}</a>
+          {% endif %}
+        </td>
+        <td><span class="badge b-{{ log.action }}">{{ log.action }}</span></td>
+        <td class="mono">{{ log.matched_by|default:"-" }}</td>
+        <td class="mono">{{ log.target_id|default_if_none:"-" }}</td>
+        <td class="mut">{{ log.message }}</td>
+        <td>
+          {% if log.diff_json %}
+          <details>
+            <summary>{{ log.diff_json|length }} field changes</summary>
+            <table class="data-table">
+              {% for field, change in log.diff_json.items %}
+              <tr>
+                <td class="mono">{{ field }}</td>
+                <td class="mut">{{ change.old|default_if_none:"empty"|truncatechars:40 }}</td>
+                <td>{{ change.new|truncatechars:60 }}</td>
+              </tr>
+              {% endfor %}
+            </table>
+          </details>
+          {% else %}
+            <span class="mut">no diff</span>
+          {% endif %}
+        </td>
+      </tr>
+      {% empty %}
+        <tr><td colspan="6" class="mut">No logs.</td></tr>
+      {% endfor %}
+    </table>
+  </div>
+</section>
+{% endblock %}

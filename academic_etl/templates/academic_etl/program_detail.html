@@ -1,0 +1,139 @@
+{% extends "academic_etl/base.html" %}
+{% block title %}{{ program.program_name }}{% endblock %}
+{% block content %}
+<section class="page-head">
+  <div>
+    <p class="eyebrow">Major Record Review</p>
+    <h1 class="page-title">
+      {{ program.program_name }}
+      <span class="badge b-{{ program.validation_status }}">{{ program.validation_status }}</span>
+      <span class="badge b-{{ program.review_status }}">{{ program.review_status }}</span>
+    </h1>
+    <p class="lede">
+      University: <a href="{% url 'academic_etl:university_detail' program.extracted_university_id %}">{{ program.extracted_university.name }}</a>
+      | level={{ program.degree_level }}
+    </p>
+  </div>
+  <div class="toolbar">
+    <a class="btn btn-grey" href="{% url 'academic_etl:programs_list' program.pipeline_run_id %}">Back to queue</a>
+  </div>
+</section>
+
+<section class="grid-2">
+  <form method="post" action="{% url 'academic_etl:program_action' program.pk %}" class="panel">
+    {% csrf_token %}
+    <div class="panel-head">
+      <h2>Editable fields</h2>
+      <div class="action-row">
+        <button class="btn btn-ok" name="action" value="approve">Approve</button>
+        <button class="btn btn-bad" name="action" value="delete">Reject</button>
+        <button class="btn btn-blue" name="action" value="edit">Save edits</button>
+      </div>
+    </div>
+    <div class="table-wrap">
+      <table class="data-table">
+        <tr><th style="width:160px">Field</th><th>Value</th><th style="width:320px">Evidence &amp; source</th></tr>
+        {% for row in rows %}
+        <tr>
+          <td class="mono">{{ row.field }}</td>
+          <td>
+            {% if row.input_type == "textarea" %}
+              <textarea name="{{ row.field }}" rows="4">{{ row.value|default_if_none:'' }}</textarea>
+            {% elif row.input_type == "degree" %}
+              <select name="{{ row.field }}">
+                {% for value, label in degree_level_choices %}
+                  <option value="{{ value }}" {% if row.value == value %}selected{% endif %}>{{ value }}</option>
+                {% endfor %}
+              </select>
+            {% else %}
+              <input type="text" name="{{ row.field }}" value="{{ row.value|default_if_none:'' }}">
+            {% endif %}
+          </td>
+          <td>
+            {% for ev in row.evidence %}
+              <div class="snippet">
+                {{ ev.text_snippet|truncatechars:120 }}<br>
+                <span class="mut">
+                  conf {{ ev.confidence_score|floatformat:2 }} | {{ ev.extractor_name }} ({{ ev.extraction_method }})
+                  {% if ev.source_url %} | <a href="{{ ev.source_url }}" target="_blank" rel="noopener">source</a>{% endif %}
+                  | <a href="{% url 'academic_etl:evidence_detail' ev.pk %}">detail</a>
+                </span>
+              </div>
+            {% empty %}
+              <span class="mut">No evidence</span>
+            {% endfor %}
+          </td>
+        </tr>
+        {% endfor %}
+      </table>
+    </div>
+  </form>
+
+  <aside>
+    <div class="panel-flat">
+      <div class="panel-head"><h2>Program intelligence</h2></div>
+      <div class="panel-body">
+        <div class="kv"><div class="k">Confidence</div><div class="v">
+          <div class="score"><span>{{ program.confidence_score|floatformat:2 }}</span><div class="progress {% if program.confidence_score >= 0.75 %}ok{% elif program.confidence_score >= 0.5 %}warn{% else %}bad{% endif %}"><span style="width:{% widthratio program.confidence_score 1 100 %}%"></span></div></div>
+        </div></div>
+        <div class="kv"><div class="k">Higher-ed</div><div class="v">
+          {% if program.is_higher_education_program %}
+            <span class="badge b-yes">yes</span>
+          {% elif program.is_higher_education_program == False %}
+            <span class="badge b-no">no</span>
+          {% else %}
+            <span class="badge b-uncertain">uncertain</span>
+          {% endif %}
+        </div></div>
+      <div class="kv"><div class="k">Major URL</div><div class="v">{% if program.program_url %}<a href="{{ program.program_url }}" target="_blank" rel="noopener">{{ program.program_url|truncatechars:46 }}</a>{% else %}<span class="mut">missing</span>{% endif %}</div></div>
+        <div class="kv"><div class="k">Source</div><div class="v">{% if program.source_url %}<a href="{{ program.source_url }}" target="_blank" rel="noopener">{{ program.source_url|truncatechars:46 }}</a>{% else %}<span class="mut">missing</span>{% endif %}</div></div>
+      </div>
+    </div>
+
+    <div class="panel-flat">
+      <div class="panel-head"><h2>Validation issues</h2></div>
+      <div class="table-wrap">
+        <table class="data-table">
+          <tr><th>Severity</th><th>Field</th><th>Code</th></tr>
+          {% for i in issues %}
+          <tr>
+            <td><span class="badge b-{{ i.severity }}">{{ i.severity }}</span></td>
+            <td class="mono">{{ i.field_name }}</td>
+            <td class="mono">{{ i.code }}</td>
+          </tr>
+          <tr><td colspan="3" class="mut">{{ i.message }}</td></tr>
+          {% empty %}
+            <tr><td colspan="3" class="mut">None.</td></tr>
+          {% endfor %}
+        </table>
+      </div>
+    </div>
+  </aside>
+</section>
+
+<section class="panel">
+  <div class="panel-head">
+    <h2>Evidence</h2>
+    <span class="badge b-unknown">{{ evidence|length }} rows</span>
+  </div>
+  <div class="table-wrap">
+    <table class="data-table">
+      <tr><th>Field</th><th>Snippet</th><th>Confidence</th><th>Extractor</th><th>Source</th><th></th></tr>
+      {% for ev in evidence %}
+      <tr>
+        <td class="mono">{{ ev.field_name }}</td>
+        <td><div class="snippet">{{ ev.text_snippet|truncatechars:170 }}</div></td>
+        <td>
+          <div class="score"><span>{{ ev.confidence_score|floatformat:2 }}</span><div class="progress {% if ev.confidence_score >= 0.75 %}ok{% elif ev.confidence_score >= 0.5 %}warn{% else %}bad{% endif %}"><span style="width:{% widthratio ev.confidence_score 1 100 %}%"></span></div></div>
+        </td>
+        <td class="mono">{{ ev.extractor_name }}</td>
+        <td>{% if ev.source_url %}<a href="{{ ev.source_url }}" target="_blank" rel="noopener">source</a>{% else %}<span class="mut">missing</span>{% endif %}</td>
+        <td><a class="btn btn-grey" href="{% url 'academic_etl:evidence_detail' ev.pk %}">Detail</a></td>
+      </tr>
+      {% empty %}
+        <tr><td colspan="6" class="mut">No evidence.</td></tr>
+      {% endfor %}
+    </table>
+  </div>
+</section>
+{% endblock %}

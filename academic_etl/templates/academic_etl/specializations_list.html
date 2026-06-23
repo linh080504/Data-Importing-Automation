@@ -1,0 +1,114 @@
+{% extends "academic_etl/base.html" %}
+{% block title %}Specializations — Run #{{ run.pk }}{% endblock %}
+{% block content %}
+<section class="page-head">
+  <div>
+    <p class="eyebrow">Run #{{ run.pk }} — {{ run.country_name }}</p>
+    <h1 class="page-title">Specializations</h1>
+    <p class="lede">Third-level academic hierarchy: specializations/concentrations within programs.</p>
+  </div>
+  <div class="toolbar">
+    <a class="btn btn-ghost" href="{% url 'academic_etl:run_detail' run.pk %}">Run detail</a>
+    <a class="btn btn-grey" href="{% url 'academic_etl:programs_list' run.pk %}">Programs</a>
+  </div>
+</section>
+
+<nav class="subnav">
+  <a class="chip" href="{% url 'academic_etl:run_detail' run.pk %}">Overview</a>
+  <a class="chip" href="{% url 'academic_etl:seeds_list' run.pk %}">Seeds</a>
+  <a class="chip" href="{% url 'academic_etl:universities_list' run.pk %}">Universities</a>
+  <a class="chip" href="{% url 'academic_etl:programs_list' run.pk %}">Majors</a>
+  <a class="chip active" href="{% url 'academic_etl:specializations_list' run.pk %}">Specializations</a>
+  <a class="chip" href="{% url 'academic_etl:clean_universities' run.pk %}">Clean Unis</a>
+  <a class="chip" href="{% url 'academic_etl:clean_majors' run.pk %}">Clean Majors</a>
+  <a class="chip" href="{% url 'academic_etl:import_preview' run.pk %}">Import</a>
+</nav>
+
+<section class="metric-grid">
+  <div class="metric">
+    <div class="label">Total specializations</div>
+    <div class="value">{{ total }}</div>
+  </div>
+  <div class="metric">
+    <div class="label">Approved</div>
+    <div class="value">{{ approved_count }}</div>
+  </div>
+  <div class="metric">
+    <div class="label">Pending</div>
+    <div class="value">{{ pending_count }}</div>
+  </div>
+</section>
+
+<section class="panel">
+  <div class="panel-head">
+    <h2>Specializations</h2>
+    <span class="badge b-discovered">{{ specializations|length }} rows</span>
+  </div>
+
+  <form class="filter-form" method="get">
+    <div>
+      <label>Search</label>
+      <input type="text" name="q" value="{{ q }}" placeholder="Specialization name...">
+    </div>
+    <div>
+      <label>Review status</label>
+      <select name="review">
+        <option value="">All</option>
+        <option value="pending" {% if review == "pending" %}selected{% endif %}>Pending</option>
+        <option value="approved" {% if review == "approved" %}selected{% endif %}>Approved</option>
+        <option value="rejected" {% if review == "rejected" %}selected{% endif %}>Rejected</option>
+      </select>
+    </div>
+    <div class="action-row">
+      <button class="btn btn-blue" type="submit">Apply</button>
+      <a class="btn btn-ghost" href="{% url 'academic_etl:specializations_list' run.pk %}">Reset</a>
+    </div>
+  </form>
+
+  <div class="table-wrap">
+    <table class="data-table">
+      <tr>
+        <th>Specialization</th>
+        <th>Program (Major)</th>
+        <th>University</th>
+        <th>Confidence</th>
+        <th>Review</th>
+        <th>Actions</th>
+      </tr>
+      {% for spec in specializations %}
+      <tr>
+        <td><strong>{{ spec.specialization_name }}</strong>
+          {% if spec.description %}<div class="mut truncate" style="max-width:300px">{{ spec.description }}</div>{% endif %}
+        </td>
+        <td>
+          <a href="{% url 'academic_etl:program_detail' spec.extracted_program.pk %}">{{ spec.extracted_program.program_name }}</a>
+          <div class="mut"><span class="badge b-{{ spec.extracted_program.degree_level }}">{{ spec.extracted_program.degree_level }}</span></div>
+        </td>
+        <td>
+          {% if spec.extracted_program.extracted_university %}
+            <a href="{% url 'academic_etl:university_detail' spec.extracted_program.extracted_university.pk %}">{{ spec.extracted_program.extracted_university.name }}</a>
+          {% endif %}
+        </td>
+        <td>
+          <div class="score">
+            <span>{{ spec.confidence_score|floatformat:2 }}</span>
+            <div class="progress {% if spec.confidence_score >= 0.75 %}ok{% elif spec.confidence_score >= 0.5 %}warn{% else %}bad{% endif %}"><span style="width:{% widthratio spec.confidence_score 1 100 %}%"></span></div>
+          </div>
+        </td>
+        <td><span class="badge b-{{ spec.review_status }}">{{ spec.review_status }}</span></td>
+        <td>
+          <form method="post" action="{% url 'academic_etl:specialization_action' spec.pk %}" style="display:inline">
+            {% csrf_token %}
+            <input type="hidden" name="next" value="{% url 'academic_etl:specializations_list' run.pk %}?{{ request.GET.urlencode }}">
+            <button class="btn btn-ok" type="submit" name="action" value="approve" title="Approve">Approve</button>
+            <button class="btn btn-bad" type="submit" name="action" value="reject" title="Reject">Reject</button>
+          </form>
+        </td>
+      </tr>
+      {% empty %}
+      <tr><td colspan="6" class="mut">No specializations found for this run. Use Fanar with --with-majors to extract specializations.</td></tr>
+      {% endfor %}
+    </table>
+  </div>
+</section>
+{% endblock %}
