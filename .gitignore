@@ -4,5 +4,7 @@ db.sqlite3
 var/
 .env
 .claude/
-Scrapling/
-skills/
+.DS_Store
+__pycache__/
+.idea/
+.vscode/

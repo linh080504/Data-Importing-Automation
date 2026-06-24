@@ -57,6 +57,8 @@ INSTALLED_APPS = [
 # --- academic_etl settings ---
 ETL_VAR_DIR = BASE_DIR / "var"
 ETL_HTML_CACHE_DIR = ETL_VAR_DIR / "html_cache"
+ETL_VAR_DIR.mkdir(parents=True, exist_ok=True)
+ETL_HTML_CACHE_DIR.mkdir(parents=True, exist_ok=True)
 ETL_USER_AGENT = "BeyondDegreeBot/0.1 (academic data pipeline; contact: linhnguyenthuy0805@gmail.com)"
 ETL_REQUEST_TIMEOUT = 15  # seconds
 ETL_RATE_LIMIT_SECONDS = 1.5  # min delay between requests to the same domain
@@ -103,6 +105,7 @@ GEMINI_API_KEYS = os.environ.get("GEMINI_API_KEYS", "")
 # cap (e.g. "gemini-2.5-flash,gemini-2.5-flash-lite,gemini-2.0-flash").
 GEMINI_MODEL = os.environ.get("GEMINI_MODEL", "gemini-2.5-flash")
 GEMINI_CACHE_DIR = ETL_VAR_DIR / "gemini_cache"  # per-institution JSON responses
+GEMINI_CACHE_DIR.mkdir(parents=True, exist_ok=True)
 GEMINI_CONCURRENCY = int(os.environ.get("GEMINI_CONCURRENCY", "4"))  # parallel API calls
 GEMINI_MAX_RETRIES = int(os.environ.get("GEMINI_MAX_RETRIES", "4"))  # backoff on 429/5xx
 GEMINI_TIMEOUT = int(os.environ.get("GEMINI_TIMEOUT", "60"))  # seconds per request
@@ -117,6 +120,7 @@ FANAR_API_BASE_URL = os.environ.get("FANAR_API_BASE_URL", "https://api.fanar.qa/
 FANAR_MODEL = os.environ.get("FANAR_MODEL", "Fanar-C-2-27B")
 FANAR_TRANSLATION_MODEL = os.environ.get("FANAR_TRANSLATION_MODEL", "Fanar-Shaheen-MT-1")
 FANAR_CACHE_DIR = ETL_VAR_DIR / "fanar_cache"
+FANAR_CACHE_DIR.mkdir(parents=True, exist_ok=True)
 FANAR_TIMEOUT = int(os.environ.get("FANAR_TIMEOUT", "15"))
 FANAR_CONCURRENCY = int(os.environ.get("FANAR_CONCURRENCY", "4"))
 

@@ -2137,6 +2137,12 @@ class CsvExportTests(TestCase):
         complete = self.client.get(reverse("academic_etl:export_universities_csv", args=[run.pk]))
         self.assertContains(complete, "Tech University")
 
+        clean_page = self.client.get(reverse("academic_etl:clean_universities", args=[run.pk]))
+        self.assertContains(clean_page, "Run AI gap-fill")
+        self.assertContains(clean_page, "global_rank")
+        self.assertContains(clean_page, "contact_person")
+        self.assertContains(clean_page, "university_campuses")
+
         uni.financials = "Tuition is VND 30,000,000 per year"
         uni.save(update_fields=["financials"])
 

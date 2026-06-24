@@ -824,6 +824,18 @@ def _major_value_from_post(field: str, request):
     return (request.POST.get(field, "") or "").strip()
 
 
+def _csv_display_value(field: str, value) -> str:
+    if field == "sponsored":
+        return "0"
+    if value is None:
+        return ""
+    if isinstance(value, bool) or field in UNIVERSITY_BOOL_FIELDS:
+        if value in (True, False):
+            return "1" if value else "0"
+        return ""
+    return str(value)
+
+
 def _manual_evidence(entity_type: str, entity_id: int, field: str, value, note: str = ""):
     if value in ("", None):
         return
@@ -1423,6 +1435,11 @@ def clean_universities(request, run_id):
     qs = _clean_university_qs(run.universities.all())
     qs, filters = _apply_university_filters(qs, request)
     rows = _attach_counts(list(qs), "university")
+    for row in rows:
+        row.clean_field_values = [
+            {"field": field, "value": _csv_display_value(field, getattr(row, field, ""))}
+            for field in UNIVERSITY_CSV_FIELDS
+        ]
     return render(request, "academic_etl/clean_universities.html", {
         "run": run,
         "universities": rows,
